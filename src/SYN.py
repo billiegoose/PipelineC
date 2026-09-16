@@ -132,9 +132,7 @@ def PART_SET_TOOL(part_str, allow_fail=False):
                 print('Ex. #pragma PART "LFE5U-85F-6BG381C"')
                 sys.exit(0)
         else:
-            if part_str.lower().startswith("xc7") and OPEN_TOOLS.XC7_IS_INSTALLED(part_str):
-                SYN_TOOL = OPEN_TOOLS
-            elif part_str.lower().startswith("xc"):
+            if part_str.lower().startswith("xc"):
                 SYN_TOOL = VIVADO
                 if os.path.exists(VIVADO.VIVADO_PATH):
                     print("Vivado:", VIVADO.VIVADO_PATH, flush=True)

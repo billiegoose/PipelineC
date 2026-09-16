@@ -51,30 +51,14 @@ def test_xc7_chipdb_directory_lookup_accepts_device_fallback():
         _restore_env("OPENXC7_CHIPDB", old_openxc7)
 
 
-def test_part_set_tool_prefers_openxc7_when_available():
+def test_part_set_tool_keeps_existing_xilinx_vivado_default():
     old_tool = SYN.SYN_TOOL
-    old_probe = OPEN_TOOLS.XC7_IS_INSTALLED
     try:
         SYN.SYN_TOOL = None
-        OPEN_TOOLS.XC7_IS_INSTALLED = lambda part: part == PART
-        SYN.PART_SET_TOOL(PART)
-        assert SYN.SYN_TOOL is OPEN_TOOLS
-    finally:
-        SYN.SYN_TOOL = old_tool
-        OPEN_TOOLS.XC7_IS_INSTALLED = old_probe
-
-
-def test_part_set_tool_preserves_vivado_fallback_when_openxc7_unavailable():
-    old_tool = SYN.SYN_TOOL
-    old_probe = OPEN_TOOLS.XC7_IS_INSTALLED
-    try:
-        SYN.SYN_TOOL = None
-        OPEN_TOOLS.XC7_IS_INSTALLED = lambda part: False
         SYN.PART_SET_TOOL(PART, allow_fail=True)
         assert SYN.SYN_TOOL is SYN.VIVADO
     finally:
         SYN.SYN_TOOL = old_tool
-        OPEN_TOOLS.XC7_IS_INSTALLED = old_probe
 
 
 def test_basys3_board_package_pins_clock_and_part():

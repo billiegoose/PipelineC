@@ -308,16 +308,6 @@ def GET_XC7_CHIPDB_PATH(part_str):
     return None
 
 
-def XC7_IS_INSTALLED(part_str):
-    return (
-        IS_XC7_PART(part_str)
-        and YOSYS_BIN_PATH is not None
-        and GHDL_BIN_PATH is not None
-        and GET_TOOL_PATH(XC7_NEXTPNR_EXE) is not None
-        and GET_XC7_CHIPDB_PATH(part_str) is not None
-    )
-
-
 # Derive cmd line options from part
 def PART_TO_CMD_LINE_OPTS(part_str):
     opts = ""
