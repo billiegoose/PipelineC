@@ -545,6 +545,9 @@ def SYN_AND_REPORT_TIMING_NEW(
     use_existing_log_file=True,
     is_final_top=False,
 ):
+    is_xc7 = IS_XC7_PART(parser_state.part)
+    xc7_final_top = is_xc7 and is_final_top
+
     # Single inst
     if inst_name:
         Logic = parser_state.LogicInstLookupTable[inst_name]
@@ -574,7 +577,7 @@ def SYN_AND_REPORT_TIMING_NEW(
         # Set log path
         # Hash for multi main is just hash of main pipes
         hash_ext = multimain_timing_params.GET_HASH_EXT(parser_state)
-        log_file_name = "open_tools_final.log" if is_final_top else "open_tools" + hash_ext + ".log"
+        log_file_name = "open_tools_final.log" if xc7_final_top else "open_tools" + hash_ext + ".log"
 
     if not os.path.exists(output_directory):
         os.makedirs(output_directory)
@@ -585,7 +588,7 @@ def SYN_AND_REPORT_TIMING_NEW(
     log_to_read = log_path
 
     # If log file exists dont run syn
-    if not is_final_top and os.path.exists(log_to_read) and use_existing_log_file:
+    if not xc7_final_top and os.path.exists(log_to_read) and use_existing_log_file:
         # print "SKIPPED:", syn_imp_bash_cmd
         print("Reading log", log_to_read)
         f = open(log_path, "r")
@@ -610,7 +613,7 @@ def SYN_AND_REPORT_TIMING_NEW(
             )
         else:
             VHDL.WRITE_MULTIMAIN_TOP(
-                parser_state, multimain_timing_params, is_final_top
+                parser_state, multimain_timing_params, xc7_final_top
             )
 
         # Generate files for this SYN
@@ -626,7 +629,7 @@ def SYN_AND_REPORT_TIMING_NEW(
 
         # Which vhdl files?
         vhdl_files_texts, top_entity_name = SYN.GET_VHDL_FILES_TCL_TEXT_AND_TOP(
-            multimain_timing_params, parser_state, inst_name, is_final_top
+            multimain_timing_params, parser_state, inst_name, xc7_final_top
         )
 
         if GHDL_PREFIX is None:
@@ -634,7 +637,6 @@ def SYN_AND_REPORT_TIMING_NEW(
         if YOSYS_BIN_PATH is None:
             raise Exception("yosys not installed?")
 
-        is_xc7 = IS_XC7_PART(parser_state.part)
         if is_xc7:
             nextpnr_exe = GET_TOOL_PATH(XC7_NEXTPNR_EXE)
             chipdb_path = GET_XC7_CHIPDB_PATH(parser_state.part)
