@@ -8,3 +8,6 @@ yacctab.py
 
 # dsp/fir_tb.py plots, written into the CWD by the fir_*_tb.py examples
 *_tb.png
+
+# Local OpenXC7/nextpnr chipdb and generated FPGA build artifacts.
+.pgc-openxc7/

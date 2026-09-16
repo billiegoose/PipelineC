@@ -231,6 +231,15 @@ def get_tests() -> list:
             requires=["make", "ghdl"],
         )
     )
+    # Pure configuration/selection coverage for the Xilinx 7-series open-source
+    # flow and the Basys 3 board package. No FPGA tools are invoked.
+    tests.append(
+        Test(
+            name="openxc7_unit_test",
+            category="unit",
+            cmd=[INST_DIR / "openxc7_unit_test.py"],
+        )
+    )
     return tests
 
 

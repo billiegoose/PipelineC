@@ -3,7 +3,7 @@
 See the [Pypeline language guide](../../docs/pypeline_guide.md) and
 [getting started](../../docs/README.md) for background.
 
-* [blink.py](blink.py) — blink an LED, the classic first hardware design (`@MAIN`, `Reg[T]`).
+* [blink.py](blink.py) — blink LD0 on a Digilent Basys 3 using its 100 MHz oscillator; this is the minimal real-board example for the open-source Xilinx 7-series `--syn_tool openxc7` flow (`@MAIN`, `Reg[T]`). See [getting started](../../docs/README.md#open-source-xilinx-7-series--basys-3) for the build and volatile-SRAM programming commands.
 * [pipeline.py](pipeline.py) — a minimal pure-function pipeline (float adder) showing auto-pipelining.
 * [vga_test_pattern.py](vga_test_pattern.py) — full worked example from the language guide: a VGA
   colour test pattern, driven to real board pins and viewable live in native simulation.
