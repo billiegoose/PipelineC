@@ -121,11 +121,14 @@ def test_pipelinec_cli_exposes_openxc7_override():
     assert "SYN.SYN_TOOL = SYN.OPEN_TOOLS" in cli_text
 
 
-def test_basys3_smoke_helper_is_volatile_only():
+def test_basys3_has_dedicated_openxc7_example():
     repo_root = Path(__file__).resolve().parents[4]
-    smoke_text = (repo_root / "scripts" / "basys3_openxc7_smoke.py").read_text()
-    assert '[args.openfpgaloader, "--board", "basys3", "--bitstream", bitstream]' in smoke_text
-    assert '"-f"' not in smoke_text
+    example_text = (repo_root / "examples" / "pypeline" / "basys3_blink.py").read_text()
+    assert "import board.basys3.part35t" in example_text
+    assert "import board.basys3.io as board" in example_text
+    assert "@MAIN(100.0)" in example_text
+    assert "board.led0 = led" in example_text
+    assert "--syn_tool openxc7" in example_text
 
 
 if __name__ == "__main__":

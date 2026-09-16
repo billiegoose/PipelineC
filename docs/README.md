@@ -286,29 +286,6 @@ pypelinec ./examples/pypeline/pipeline.py --comb
   * Ex. `@MAIN(F)` says the `my_pipeline` function is a single top level `@MAIN` function intended to run at `F`MHz — see [Top-Level Entry Points](pypeline_guide.md#top-level-entry-points).
   * Ex. `PART("LFE5UM5G-85F-8BG756C")` for `ghdl+yosys+nextpnr` `ECP5U` flow.
 
-### Open-source Xilinx 7-series / Basys 3
-
-Xilinx 7-series parts can use the open-source `ghdl+yosys+nextpnr-xilinx+Project X-Ray` backend with `--syn_tool openxc7`. `examples/pypeline/blink.py` targets the Digilent Basys 3 (`xc7a35tcpg236-1`); `include/pypeline/board/basys3/pins.xdc` maps the board's 100 MHz clock and LD0.
-
-A complete build is:
-
-```bash
-OPENXC7_CHIPDB=/path/to/chipdb \
-PRJXRAY_DB_DIR=/path/to/prjxray-db \
-OPENXC7_PYTHONPATH=/path/to/fasm/site-packages:/path/to/prjxray/python \
-pypelinec examples/pypeline/blink.py \
-  --syn_tool openxc7 \
-  --pins include/pypeline/board/basys3/pins.xdc
-```
-
-`nextpnr-xilinx`, `fasm2frames`, and `xc7frames2bit` are discovered on `PATH`. They can instead be named explicitly with `OPENXC7_NEXTPNR_XILINX`, `OPENXC7_FASM2FRAMES`, and `OPENXC7_XC7FRAMES2BIT`. `OPENXC7_CHIPDB` may point directly to a chipdb file or to a directory containing the device chipdb. Some packaged Project X-Ray installations require `OPENXC7_PYTHONPATH` so `fasm2frames` can import `fasm`, `prjxray`, and their Python dependencies.
-
-To load a generated Basys 3 bitstream into volatile SRAM without modifying configuration flash:
-
-```bash
-python3 scripts/basys3_openxc7_smoke.py path/to/top.bit
-```
-
 * Since `my_pipeline` is a pure function the Pypeline tool will auto-pipeline the function to meet the target operating frequency.
 ```
 pypelinec ./examples/pypeline/pipeline.py # Default no-arguments auto-pipelines when possible.

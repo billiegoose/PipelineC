@@ -10,7 +10,7 @@ import subprocess
 import sys
 import re
 from collections import OrderedDict
-from shutil import copytree
+from distutils.dir_util import copy_tree
 from subprocess import PIPE, Popen
 
 import AST
@@ -10872,11 +10872,7 @@ def WRITE_0_ADDED_CLKS_INIT_FILES(parser_state):
     VHDL.WRITE_GLOBAL_WIRES_VHDL_PACKAGE(parser_state)
 
     # Copy pipelinec vhdl directory to output so users can export output directory alone
-    copytree(
-        f"{REPO_ABS_DIR()}/src/vhdl",
-        SYN.SYN_OUTPUT_DIRECTORY + "/built_in",
-        dirs_exist_ok=True,
-    )
+    copy_tree(f"{REPO_ABS_DIR()}/src/vhdl", SYN.SYN_OUTPUT_DIRECTORY + "/built_in")
 
 
 def INSTANCE_IS_INSIDE_BUILT_IN_OP(parser_state, inst_name):

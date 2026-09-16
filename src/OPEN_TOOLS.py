@@ -702,50 +702,37 @@ def SYN_AND_REPORT_TIMING_NEW(
         # A single shell script build .sh
         m_ghdl = GET_GHDL_PLUGIN_FLAGS()
         optional_router2 = ""  # Always default router for now...
+        # optional_router2 = "--router router2"
+        # if inst_name:
+        #    # Dont use router two for small single instances
+        #    # Only use router two for multi main top level no inst_name
+        #    optional_router2 = ""
         sh_file = top_entity_name + ".sh"
         sh_path = output_directory + "/" + sh_file
         f = open(sh_path, "w")
         # -v --debug
         if not YOSYS_JSON_ONLY:
             if is_xc7:
-                yosys_commands = [
-                    f"ghdl --std=08 -frelaxed {vhdl_files_texts} -e {top_entity_name}",
-                    f"synth_xilinx -flatten -abc9 -arch xc7 -top {top_entity_name}",
-                    f"write_json {top_entity_name}.json",
-                ]
-            else:
-                if parser_state.part.lower().startswith("ice"):
-                    exe_ext = "ice40"
-                    nowidelut = ""
-                    dsp = "-dsp"
-                else:
-                    exe_ext = "ecp5"
-                    nowidelut = "-nowidelut"
-                    dsp = ""
-                yosys_commands = [
-                    f"ghdl --std=08 -frelaxed {vhdl_files_texts} -e {top_entity_name}",
-                    f"synth_{exe_ext} -abc9 {dsp} {nowidelut} -top {top_entity_name}"
-                    f" -json {top_entity_name}.json",
-                    f"write_edif -top {top_entity_name} {top_entity_name}.edf",
-                ]
-
-            yosys_script_arg = WRITE_YOSYS_SCRIPT(
-                yosys_commands,
-                output_directory + "/" + top_entity_name + "_yosys.ys",
-            )
-            f.write(
-                """
+                yosys_script_arg = WRITE_YOSYS_SCRIPT(
+                    [
+                        f"ghdl --std=08 -frelaxed {vhdl_files_texts} -e {top_entity_name}",
+                        f"synth_xilinx -flatten -abc9 -arch xc7 -top {top_entity_name}",
+                        f"write_json {top_entity_name}.json",
+                    ],
+                    output_directory + "/" + top_entity_name + "_yosys.ys",
+                )
+                f.write(
+                    """
 #!/usr/bin/env bash
 set -e
 export GHDL_PREFIX="""
-                + GHDL_PREFIX
-                + f"""
+                    + GHDL_PREFIX
+                    + f"""
 # Elab+Syn (json is output)
 {YOSYS_BIN_PATH}/yosys {m_ghdl} {yosys_script_arg} &>> {shlex.quote(log_file_name)}
 """
-            )
+                )
 
-            if is_xc7:
                 xdc_arg = ""
                 if is_final_top and SYN.PIN_CONSTRAINTS_FILE:
                     xdc_arg = " --xdc " + shlex.quote(SYN.PIN_CONSTRAINTS_FILE)
@@ -814,18 +801,50 @@ export GHDL_PREFIX="""
                         + "\n"
                     )
             else:
+                # Which exe?
+                if parser_state.part.lower().startswith("ice"):
+                    exe_ext = "ice40"
+                    nowidelut = ""
+                    dsp = "-dsp"
+                else:
+                    exe_ext = "ecp5"
+                    nowidelut = "-nowidelut"
+                    dsp = ""
+                yosys_script_arg = WRITE_YOSYS_SCRIPT(
+                    [
+                        f"ghdl --std=08 -frelaxed {vhdl_files_texts} -e {top_entity_name}",
+                        f"synth_{exe_ext} -abc9 {dsp} {nowidelut} -top {top_entity_name}"
+                        f" -json {top_entity_name}.json",
+                        f"write_edif -top {top_entity_name} {top_entity_name}.edf",
+                    ],
+                    output_directory + "/" + top_entity_name + "_yosys.ys",
+                )
                 f.write(
-                    f"{NEXTPNR_BIN_PATH}/nextpnr-{exe_ext} "
+                    """
+#!/usr/bin/env bash
+export GHDL_PREFIX="""
+                    + GHDL_PREFIX
+                    + f"""
+# Elab+Syn (json is output) $MODULE -g
+{YOSYS_BIN_PATH}/yosys {m_ghdl} {yosys_script_arg} &>> """
+                    + log_file_name
+                    + f"""
+# P&R
+{NEXTPNR_BIN_PATH}/nextpnr-"""
+                    + exe_ext
+                    + " "
                     + PART_TO_CMD_LINE_OPTS(parser_state.part)
                     + " --json "
                     + top_entity_name
                     + ".json --pre-pack "
                     + constraints_filepath
-                    + " --timing-allow-fail --seed 1 "
+                    + " --timing-allow-fail "
+                    + " --seed 1 "
                     + optional_router2
                     + " &>> "
                     + log_file_name
-                    + "\n"
+                    + """
+"""
                 )
         else:
             # YOSYS_JSON_ONLY
