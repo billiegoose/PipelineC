@@ -1,7 +1,7 @@
 # pyright: reportInvalidTypeForm=none
 """Digilent Basys 3 basic board I/O for Pypeline designs.
 
-Names follow the labels printed on the PCB: LD0..LD15 and SW0..SW15.
+Names follow the labels printed on the PCB: LD0..LD15, SW0..SW15, and BTNC/BTNU/BTNL/BTNR/BTND.
 """
 
 from pypeline import Input, Output, make_clock, uint1_t
@@ -44,3 +44,10 @@ SW12: Input[uint1_t]
 SW13: Input[uint1_t]
 SW14: Input[uint1_t]
 SW15: Input[uint1_t]
+
+# Pushbuttons, using the PCB labels.
+BTNC: Input[uint1_t]
+BTNU: Input[uint1_t]
+BTNL: Input[uint1_t]
+BTNR: Input[uint1_t]
+BTND: Input[uint1_t]
