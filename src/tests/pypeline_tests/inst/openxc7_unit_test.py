@@ -7,7 +7,6 @@ flow reproducible on any host with a compatible OpenXC7 toolchain.
 """
 
 import os
-import shlex
 import sys
 import tempfile
 from pathlib import Path
@@ -42,9 +41,7 @@ def test_xc7_part_and_chipdb_candidates():
 
 def test_xc7_chipdb_directory_lookup_accepts_device_fallback():
     old_openxc7 = os.environ.get("OPENXC7_CHIPDB")
-    old_artix7 = os.environ.get("ARTIX7_CHIPDB")
     try:
-        os.environ.pop("ARTIX7_CHIPDB", None)
         with tempfile.TemporaryDirectory() as tmp_dir:
             candidate = Path(tmp_dir) / "xc7a35t.bin"
             candidate.write_bytes(b"chipdb")
@@ -52,21 +49,6 @@ def test_xc7_chipdb_directory_lookup_accepts_device_fallback():
             assert OPEN_TOOLS.GET_XC7_CHIPDB_PATH(PART) == str(candidate)
     finally:
         _restore_env("OPENXC7_CHIPDB", old_openxc7)
-        _restore_env("ARTIX7_CHIPDB", old_artix7)
-
-
-def test_xc7_pythonpath_prefix_is_optional_and_shell_quoted():
-    old = os.environ.get("OPENXC7_PYTHONPATH")
-    try:
-        os.environ.pop("OPENXC7_PYTHONPATH", None)
-        assert OPEN_TOOLS.GET_XC7_PYTHONPATH_PREFIX() == ""
-        value = "/tmp/fasm modules:/opt/project xray/python"
-        os.environ["OPENXC7_PYTHONPATH"] = value
-        assert OPEN_TOOLS.GET_XC7_PYTHONPATH_PREFIX() == (
-            "PYTHONPATH=" + shlex.quote(value) + " "
-        )
-    finally:
-        _restore_env("OPENXC7_PYTHONPATH", old)
 
 
 def test_part_set_tool_prefers_openxc7_when_available():

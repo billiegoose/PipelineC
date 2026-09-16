@@ -283,25 +283,6 @@ def IS_XC7_PART(part_str):
     return bool(part_str) and part_str.lower().startswith("xc7")
 
 
-def _ENV_OR_PATH_EXE(env_var, exe_name):
-    explicit = os.environ.get(env_var)
-    if explicit:
-        return explicit
-    return GET_TOOL_PATH(exe_name)
-
-
-def GET_XC7_NEXTPNR_EXE():
-    return _ENV_OR_PATH_EXE("OPENXC7_NEXTPNR_XILINX", XC7_NEXTPNR_EXE)
-
-
-def GET_XC7_FASM2FRAMES_EXE():
-    return _ENV_OR_PATH_EXE("OPENXC7_FASM2FRAMES", XC7_FASM2FRAMES_EXE)
-
-
-def GET_XC7_FRAMES2BIT_EXE():
-    return _ENV_OR_PATH_EXE("OPENXC7_XC7FRAMES2BIT", XC7_FRAMES2BIT_EXE)
-
-
 def _XC7_ARCH_CHIPDB_NAMES(part_str):
     """Return plausible nextpnr-xilinx architecture chipdb names."""
     package_part = part_str.lower().split("-", 1)[0]
@@ -314,36 +295,17 @@ def _XC7_ARCH_CHIPDB_NAMES(part_str):
 
 
 def GET_XC7_CHIPDB_PATH(part_str):
-    for env_var in ("OPENXC7_CHIPDB", "ARTIX7_CHIPDB"):
-        value = os.environ.get(env_var)
-        if not value:
-            continue
-        if os.path.isfile(value):
-            return value
-        if os.path.isdir(value):
-            for name in _XC7_ARCH_CHIPDB_NAMES(part_str):
-                candidate = os.path.join(value, name)
-                if os.path.isfile(candidate):
-                    return candidate
+    value = os.environ.get("OPENXC7_CHIPDB")
+    if not value:
+        return None
+    if os.path.isfile(value):
+        return value
+    if os.path.isdir(value):
+        for name in _XC7_ARCH_CHIPDB_NAMES(part_str):
+            candidate = os.path.join(value, name)
+            if os.path.isfile(candidate):
+                return candidate
     return None
-
-
-def GET_PRJXRAY_DB_DIR():
-    return os.environ.get("PRJXRAY_DB_DIR") or os.environ.get("XRAY_DATABASE_DIR")
-
-
-def GET_XC7_PYTHONPATH_PREFIX():
-    """Optional shell environment prefix for Project X-Ray Python tools.
-
-    Some packaged fasm2frames launchers rely on their surrounding toolchain
-    environment to provide both the ``fasm`` module and the ``prjxray`` Python
-    package.  OPENXC7_PYTHONPATH lets callers reproduce that environment
-    without baking distro- or Nix-specific paths into PipelineC.
-    """
-    pythonpath = os.environ.get("OPENXC7_PYTHONPATH")
-    if not pythonpath:
-        return ""
-    return "PYTHONPATH=" + shlex.quote(pythonpath) + " "
 
 
 def XC7_IS_INSTALLED(part_str):
@@ -351,7 +313,7 @@ def XC7_IS_INSTALLED(part_str):
         IS_XC7_PART(part_str)
         and YOSYS_BIN_PATH is not None
         and GHDL_BIN_PATH is not None
-        and GET_XC7_NEXTPNR_EXE() is not None
+        and GET_TOOL_PATH(XC7_NEXTPNR_EXE) is not None
         and GET_XC7_CHIPDB_PATH(part_str) is not None
     )
 
@@ -684,17 +646,14 @@ def SYN_AND_REPORT_TIMING_NEW(
 
         is_xc7 = IS_XC7_PART(parser_state.part)
         if is_xc7:
-            nextpnr_exe = GET_XC7_NEXTPNR_EXE()
+            nextpnr_exe = GET_TOOL_PATH(XC7_NEXTPNR_EXE)
             chipdb_path = GET_XC7_CHIPDB_PATH(parser_state.part)
             if nextpnr_exe is None:
-                raise Exception(
-                    "nextpnr-xilinx not installed? Put it on PATH or set "
-                    "OPENXC7_NEXTPNR_XILINX."
-                )
+                raise Exception("nextpnr-xilinx not installed? Put it on PATH.")
             if chipdb_path is None:
                 raise Exception(
                     "No nextpnr-xilinx chipdb for " + parser_state.part + ". Set "
-                    "OPENXC7_CHIPDB (file or directory) or ARTIX7_CHIPDB."
+                    "OPENXC7_CHIPDB to the chipdb file or containing directory."
                 )
         elif NEXTPNR_BIN_PATH is None:
             raise Exception("nextpnr not installed?")
@@ -756,13 +715,13 @@ export GHDL_PREFIX="""
                 )
 
                 if is_final_top:
-                    fasm2frames = GET_XC7_FASM2FRAMES_EXE()
-                    frames2bit = GET_XC7_FRAMES2BIT_EXE()
-                    prjxray_db_dir = GET_PRJXRAY_DB_DIR()
+                    fasm2frames = GET_TOOL_PATH(XC7_FASM2FRAMES_EXE)
+                    frames2bit = GET_TOOL_PATH(XC7_FRAMES2BIT_EXE)
+                    prjxray_db_dir = os.environ.get("PRJXRAY_DB_DIR")
                     if fasm2frames is None or frames2bit is None:
                         raise Exception(
                             "Final xc7 bitstream generation needs fasm2frames and "
-                            "xc7frames2bit (PATH or OPENXC7_* overrides)."
+                            "xc7frames2bit on PATH."
                         )
                     if prjxray_db_dir is None:
                         raise Exception(
@@ -776,8 +735,7 @@ export GHDL_PREFIX="""
                     if not os.path.isfile(part_yaml):
                         raise Exception("Project X-Ray part file not found: " + part_yaml)
                     f.write(
-                        GET_XC7_PYTHONPATH_PREFIX()
-                        + shlex.quote(fasm2frames)
+                        shlex.quote(fasm2frames)
                         + " --part "
                         + shlex.quote(part_name)
                         + " --db-root "
