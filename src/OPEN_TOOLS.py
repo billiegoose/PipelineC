@@ -536,71 +536,6 @@ def SYN_AND_REPORT_TIMING_MULTIMAIN(parser_state, multimain_timing_params):
 
 # MULTIMAIN OR SINGLE INSTANCE
 # Returns parsed timing report
-def _WRITE_XC7_CHARACTERIZATION_XDC(output_directory, top_entity_name):
-    """Give synthetic OpenXC7 timing tops an electrical I/O standard.
-
-    Characterization tops are not real board designs, so they intentionally
-    have no package LOC constraints. nextpnr-xilinx nevertheless requires an
-    IOSTANDARD for every PAD. Its XDC parser does not expand Vivado-style
-    ``get_ports *`` here, so enumerate the already-generated top-level VHDL
-    ports explicitly.
-    """
-    top_vhdl = os.path.join(output_directory, top_entity_name + ".vhd")
-    ports = []
-    in_port_block = False
-    with open(top_vhdl, "r") as f:
-        for line in f:
-            stripped = line.strip()
-            if not in_port_block:
-                if stripped.startswith("port(") or stripped.startswith("port ("):
-                    in_port_block = True
-                continue
-            if stripped.startswith(");") or stripped == ");":
-                break
-            if ":" not in stripped:
-                continue
-            names, decl = stripped.split(":", 1)
-            decl = decl.strip().lower()
-            if not (
-                decl.startswith("in ")
-                or decl.startswith("out ")
-                or decl.startswith("inout ")
-            ):
-                continue
-            base_names = [name.strip() for name in names.split(",") if name.strip()]
-            range_text = None
-            if "(" in decl and ")" in decl:
-                range_text = decl.split("(", 1)[1].split(")", 1)[0].strip()
-            indices = None
-            if range_text is not None:
-                if " downto " in range_text:
-                    high_text, low_text = range_text.split(" downto ", 1)
-                    if high_text.isdigit() and low_text.isdigit():
-                        high = int(high_text)
-                        low = int(low_text)
-                        indices = list(range(low, high + 1))
-                elif " to " in range_text:
-                    low_text, high_text = range_text.split(" to ", 1)
-                    if low_text.isdigit() and high_text.isdigit():
-                        low = int(low_text)
-                        high = int(high_text)
-                        indices = list(range(low, high + 1))
-            for name in base_names:
-                if indices is None or len(indices) == 1:
-                    ports.append(name)
-                else:
-                    ports.extend(f"{name}[{index}]" for index in indices)
-
-    if not ports:
-        raise Exception("Could not find characterization top ports in " + top_vhdl)
-
-    path = os.path.join(output_directory, "openxc7_characterization.xdc")
-    with open(path, "w") as f:
-        for port in ports:
-            f.write(f"set_property IOSTANDARD LVCMOS33 [get_ports {port}]\n")
-    return path
-
-
 def SYN_AND_REPORT_TIMING_NEW(
     parser_state,
     multimain_timing_params,
@@ -753,8 +688,24 @@ export GHDL_PREFIX="""
                 if is_final_top and SYN.PIN_CONSTRAINTS_FILE:
                     xdc_arg = " --xdc " + shlex.quote(SYN.PIN_CONSTRAINTS_FILE)
                 elif not is_final_top:
-                    characterization_xdc = _WRITE_XC7_CHARACTERIZATION_XDC(
-                        output_directory, top_entity_name
+                    characterization_xdc = os.path.join(
+                        output_directory, "openxc7_characterization.xdc"
+                    )
+                    characterization_generator = os.path.join(
+                        os.path.dirname(os.path.abspath(__file__)),
+                        "openxc7_characterization_xdc.py",
+                    )
+                    f.write(
+                        shlex.quote(sys.executable)
+                        + " "
+                        + shlex.quote(characterization_generator)
+                        + " "
+                        + shlex.quote(top_entity_name + ".json")
+                        + " "
+                        + shlex.quote(characterization_xdc)
+                        + " "
+                        + shlex.quote(top_entity_name)
+                        + "\n"
                     )
                     xdc_arg = " --xdc " + shlex.quote(characterization_xdc)
                 fasm_arg = ""

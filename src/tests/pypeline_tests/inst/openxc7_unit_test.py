@@ -79,31 +79,41 @@ def test_basys3_board_package_pins_clock_and_part():
     assert "IOSTANDARD LVCMOS33 [get_ports led0]" in xdc_text
 
 
-def test_xc7_characterization_xdc_sets_iostandard_without_board_locs():
+def test_xc7_characterization_xdc_uses_synthesized_flattened_ports():
+    import openxc7_characterization_xdc
+
     with tempfile.TemporaryDirectory() as tmp_dir:
         top_name = "timing_top"
-        (Path(tmp_dir) / f"{top_name}.vhd").write_text(
-            "entity timing_top is\n"
-            "port(\n"
-            " clk : in std_logic;\n"
-            " cond : in unsigned(0 downto 0);\n"
-            " iftrue : in unsigned(1 downto 0);\n"
-            " iffalse : in unsigned(1 downto 0);\n"
-            " return_output : out unsigned(1 downto 0));\n"
-            "end timing_top;\n"
+        json_path = Path(tmp_dir) / "top.json"
+        xdc_path = Path(tmp_dir) / "top.xdc"
+        json_path.write_text(
+            json.dumps(
+                {
+                    "modules": {
+                        top_name: {
+                            "ports": {
+                                "clk": {"direction": "input", "bits": [2]},
+                                "sig[pos]": {"direction": "input", "bits": list(range(3, 27))},
+                                "sig[active]": {"direction": "input", "bits": [27]},
+                                "return_output[r]": {"direction": "output", "bits": [28, 29, 30, 31]},
+                                "return_output[hs]": {"direction": "output", "bits": [32]},
+                            }
+                        }
+                    }
+                }
+            )
         )
-        xdc_path = OPEN_TOOLS._WRITE_XC7_CHARACTERIZATION_XDC(tmp_dir, top_name)
-        xdc_text = Path(xdc_path).read_text()
-        assert xdc_text == (
-            "set_property IOSTANDARD LVCMOS33 [get_ports clk]\\n"
-            "set_property IOSTANDARD LVCMOS33 [get_ports cond]\\n"
-            "set_property IOSTANDARD LVCMOS33 [get_ports iftrue[0]]\\n"
-            "set_property IOSTANDARD LVCMOS33 [get_ports iftrue[1]]\\n"
-            "set_property IOSTANDARD LVCMOS33 [get_ports iffalse[0]]\\n"
-            "set_property IOSTANDARD LVCMOS33 [get_ports iffalse[1]]\\n"
-            "set_property IOSTANDARD LVCMOS33 [get_ports return_output[0]]\\n"
-            "set_property IOSTANDARD LVCMOS33 [get_ports return_output[1]]\\n"
+        openxc7_characterization_xdc.write_characterization_xdc(
+            json_path, xdc_path, top_name
         )
+        xdc_text = xdc_path.read_text()
+        assert "[get_ports {clk}]" in xdc_text
+        assert "[get_ports {sig[pos][0]}]" in xdc_text
+        assert "[get_ports {sig[pos][23]}]" in xdc_text
+        assert "[get_ports {sig[active]}]" in xdc_text
+        assert "[get_ports {return_output[r][0]}]" in xdc_text
+        assert "[get_ports {return_output[r][3]}]" in xdc_text
+        assert "[get_ports {return_output[hs]}]" in xdc_text
         assert "LOC" not in xdc_text
 
 
