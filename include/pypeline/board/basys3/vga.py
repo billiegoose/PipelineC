@@ -9,6 +9,11 @@ from pypeline import *
 from vga.types import vga_12bpp_t
 
 
+# Basys 3 on-board 100 MHz oscillator, PACKAGE_PIN W5. Repeating the same
+# physical clock declaration across board adapters is safe: PipelineC coalesces
+# identical clock Inputs with the same name, type, and make_clock() rate.
+clk: Input[uint1_t] = make_clock(100.0)
+
 # Application-facing VGA stream.
 vga: Wire[vga_12bpp_t]
 

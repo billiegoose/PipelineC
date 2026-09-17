@@ -6,6 +6,7 @@ run_all; these tests pin the configuration/selection behavior that makes that
 flow reproducible on any host with a compatible OpenXC7 toolchain.
 """
 
+import json
 import os
 import sys
 import tempfile
@@ -67,16 +68,16 @@ def test_basys3_board_package_pins_clock_and_part():
 
     part_text = (board_dir / "part35t.py").read_text()
     io_text = (board_dir / "io.py").read_text()
+    vga_text = (board_dir / "vga.py").read_text()
     xdc_text = (board_dir / "pins.xdc").read_text()
 
     assert 'PART("xc7a35tcpg236-1")' in part_text
     assert "make_clock(100.0)" in io_text
-    assert "PACKAGE_PIN W5" in io_text
-    assert "PACKAGE_PIN U16" in io_text
+    assert "make_clock(100.0)" in vga_text
     assert "LOC W5 [get_ports clk]" in xdc_text
-    assert "LOC U16 [get_ports led0]" in xdc_text
+    assert "LOC U16 [get_ports LD0]" in xdc_text
     assert "IOSTANDARD LVCMOS33 [get_ports clk]" in xdc_text
-    assert "IOSTANDARD LVCMOS33 [get_ports led0]" in xdc_text
+    assert "IOSTANDARD LVCMOS33 [get_ports LD0]" in xdc_text
 
 
 def test_xc7_characterization_xdc_uses_synthesized_flattened_ports():
@@ -115,6 +116,14 @@ def test_xc7_characterization_xdc_uses_synthesized_flattened_ports():
         assert "[get_ports {return_output[r][3]}]" in xdc_text
         assert "[get_ports {return_output[hs]}]" in xdc_text
         assert "LOC" not in xdc_text
+
+
+def test_openxc7_comb_timing_uses_board_constrained_final_top():
+    repo_root = Path(__file__).resolve().parents[4]
+    syn_text = (repo_root / "src" / "SYN.py").read_text()
+    assert "SYN_TOOL is OPEN_TOOLS and OPEN_TOOLS.IS_XC7_PART(parser_state.part)" in syn_text
+    assert "timing_report = OPEN_TOOLS.SYN_AND_REPORT_TIMING_NEW(" in syn_text
+    assert "is_final_top=True" in syn_text
 
 
 def test_pipelinec_cli_exposes_openxc7_override():

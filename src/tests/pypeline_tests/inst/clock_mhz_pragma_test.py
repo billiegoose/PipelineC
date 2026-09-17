@@ -33,6 +33,37 @@ def _parse_source(src: str):
     return PY_TO_LOGIC.PARSE_FILE(tmp_path)
 
 
+def _parse_two_clock_modules(rate_b: float):
+    """Parse two imported board-style modules that both declare physical `clk`."""
+    tmp_dir = tempfile.mkdtemp(prefix="clock_mhz_duplicate_modules_")
+    SYN.SYN_OUTPUT_DIRECTORY = tempfile.mkdtemp(prefix="clock_mhz_pragma_test_syn_")
+    suffix = os.path.basename(tmp_dir).replace("-", "_")
+    mod_a = f"clock_a_{suffix}"
+    mod_b = f"clock_b_{suffix}"
+    module_src = """
+from pypeline import Input, make_clock, uint1_t
+clk: Input[uint1_t] = make_clock({rate})
+"""
+    for module_name, rate in ((mod_a, 85.0), (mod_b, rate_b)):
+        with open(os.path.join(tmp_dir, module_name + ".py"), "w") as f:
+            f.write(textwrap.dedent(module_src.format(rate=rate)))
+    design_src = f"""
+import sys
+sys.path.insert(0, {tmp_dir!r})
+import {mod_a}
+import {mod_b}
+from pypeline import MAIN, uint1_t
+
+@MAIN(85.0)
+def solution(x: uint1_t) -> uint1_t:
+    return ~x
+"""
+    design_path = os.path.join(tmp_dir, "design.py")
+    with open(design_path, "w") as f:
+        f.write(textwrap.dedent(design_src))
+    return PY_TO_LOGIC.PARSE_FILE(design_path)
+
+
 GOOD_SRC = """
 from pypeline import MAIN, Input, uint1_t, make_clock
 
@@ -124,10 +155,29 @@ def test_rate_mismatch_rejected():
         print("test_rate_mismatch_rejected PASS")
 
 
+def test_identical_imported_clock_inputs_coalesce():
+    parser_state = _parse_two_clock_modules(85.0)
+    assert parser_state.clk_mhz == {"clk": 85.0}, parser_state.clk_mhz
+    assert "clk" in parser_state.input_wires, parser_state.input_wires
+    assert parser_state.global_vars["clk"].type_name == "uint1_t"
+    print("test_identical_imported_clock_inputs_coalesce PASS")
+
+
+def test_mismatched_imported_clock_inputs_rejected():
+    try:
+        _parse_two_clock_modules(90.0)
+        assert False, "expected ElaborationError for same-name clocks at different rates"
+    except ElaborationError as error:
+        assert "Duplicate I/O port name 'clk'" in str(error), error
+        print("test_mismatched_imported_clock_inputs_rejected PASS")
+
+
 if __name__ == "__main__":
     test_clk_mhz_populated_on_success()
     test_non_uint1_t_rejected()
     test_output_rejected()
     test_duplicate_rate_rejected()
     test_rate_mismatch_rejected()
+    test_identical_imported_clock_inputs_coalesce()
+    test_mismatched_imported_clock_inputs_rejected()
     print("All clock_mhz_pragma tests passed.")

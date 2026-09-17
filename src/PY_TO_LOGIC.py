@@ -6536,9 +6536,26 @@ def _discover_global_wires(tree, module_globals, parser_state, name_prefix=None)
                 bare_name = safe_name
         # I/O ports are boundary signals — globally unique, no module prefix.
         # Wire[T] gets the namespace-isolating prefix to avoid collisions.
+        type_name = _inner_ctype_to_str(ann_val.inner_ctype, parser_state)
         if kind in ("Input", "Output"):
             reg_name = bare_name
             if reg_name in parser_state.global_vars:
+                existing = parser_state.global_vars[reg_name]
+                existing_clock_mhz = parser_state.clk_mhz.get(reg_name)
+                # Board adapters may independently name the same physical clock.
+                # Coalesce only an exact duplicate clock Input; all ordinary I/O
+                # duplicates and any clock type/rate mismatch remain errors.
+                same_clock_input = (
+                    kind == "Input"
+                    and reg_name in parser_state.input_wires
+                    and reg_name not in parser_state.output_wires
+                    and clock_marker is not None
+                    and existing_clock_mhz is not None
+                    and existing.type_name == type_name
+                    and existing_clock_mhz == clock_marker.mhz
+                )
+                if same_clock_input:
+                    continue
                 raise ElaborationError(
                     f"Duplicate I/O port name '{bare_name}' — "
                     f"Input/Output names must be globally unique across all imported files"
@@ -6547,7 +6564,7 @@ def _discover_global_wires(tree, module_globals, parser_state, name_prefix=None)
             reg_name = f"{name_prefix}_{bare_name}" if name_prefix else bare_name
         var_info = C_TO_LOGIC.VariableInfo()
         var_info.name = reg_name
-        var_info.type_name = _inner_ctype_to_str(ann_val.inner_ctype, parser_state)
+        var_info.type_name = type_name
         parser_state.global_vars[reg_name] = var_info
         parser_state.pypeline_global_wire_names[reg_name] = (
             f"{module_globals['__name__']}.{node.target.id}"
