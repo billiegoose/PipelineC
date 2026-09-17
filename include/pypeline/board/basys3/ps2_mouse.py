@@ -82,14 +82,30 @@ def ps2_mouse_io():
     right: Reg[uint1_t] = 0
     ready: Reg[uint1_t] = 0
 
+    # Publish only registered state.  Pypeline forwards later Reg assignments
+    # within this function, so constructing `mouse` directly from x/y/buttons at
+    # the end would expose their combinational next-state logic to every consumer
+    # (notably the VGA renderer).  These snapshots deliberately add one 100 MHz
+    # cycle of output latency and keep the module boundary register-to-register.
+    out_x: uint10_t = x
+    out_y: uint9_t = y
+    out_left: uint1_t = left
+    out_middle: uint1_t = middle
+    out_right: uint1_t = right
+    out_ready: uint1_t = ready
+
     # Sample first; edge flags intentionally describe the previously synchronized
     # values, which is exactly what a synchronous edge detector needs.
     clk_fall: uint1_t = clk_prev & (~clk_sync)
-    clk_meta = PS2Clk
-    clk_sync = clk_meta
+    # Pypeline forwards sequential assignments within a hardware function, so
+    # shift-register transfers must be written oldest-destination first.  This
+    # preserves the previous-cycle values instead of collapsing every stage to
+    # the current asynchronous pad sample.
     clk_prev = clk_sync
-    data_meta = PS2Data
+    clk_sync = clk_meta
+    clk_meta = PS2Clk
     data_sync = data_meta
+    data_meta = PS2Data
 
     # Open-drain defaults: release both lines.  States below only ever pull low.
     PS2Clk = 1
@@ -296,10 +312,10 @@ def ps2_mouse_io():
                             y = 0
 
     mouse = ps2_mouse_t(
-        x=x,
-        y=y,
-        left=left,
-        middle=middle,
-        right=right,
-        ready=ready,
+        x=out_x,
+        y=out_y,
+        left=out_left,
+        middle=out_middle,
+        right=out_right,
+        ready=out_ready,
     )
