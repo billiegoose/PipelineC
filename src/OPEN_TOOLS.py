@@ -536,17 +536,46 @@ def SYN_AND_REPORT_TIMING_MULTIMAIN(parser_state, multimain_timing_params):
 
 # MULTIMAIN OR SINGLE INSTANCE
 # Returns parsed timing report
-def _WRITE_XC7_CHARACTERIZATION_XDC(output_directory):
+def _WRITE_XC7_CHARACTERIZATION_XDC(output_directory, top_entity_name):
     """Give synthetic OpenXC7 timing tops an electrical I/O standard.
 
     Characterization tops are not real board designs, so they intentionally
-    have no package LOC constraints.  nextpnr-xilinx nevertheless requires an
-    IOSTANDARD for every PAD; a wildcard property is sufficient for these
-    temporary timing-only circuits.
+    have no package LOC constraints. nextpnr-xilinx nevertheless requires an
+    IOSTANDARD for every PAD. Its XDC parser does not expand Vivado-style
+    ``get_ports *`` here, so enumerate the already-generated top-level VHDL
+    ports explicitly.
     """
+    top_vhdl = os.path.join(output_directory, top_entity_name + ".vhd")
+    ports = []
+    in_port_block = False
+    with open(top_vhdl, "r") as f:
+        for line in f:
+            stripped = line.strip()
+            if not in_port_block:
+                if stripped.startswith("port(") or stripped.startswith("port ("):
+                    in_port_block = True
+                continue
+            if stripped.startswith(");") or stripped == ");":
+                break
+            if ":" not in stripped:
+                continue
+            names, decl = stripped.split(":", 1)
+            decl = decl.strip().lower()
+            if not (
+                decl.startswith("in ")
+                or decl.startswith("out ")
+                or decl.startswith("inout ")
+            ):
+                continue
+            ports.extend(name.strip() for name in names.split(",") if name.strip())
+
+    if not ports:
+        raise Exception("Could not find characterization top ports in " + top_vhdl)
+
     path = os.path.join(output_directory, "openxc7_characterization.xdc")
     with open(path, "w") as f:
-        f.write("set_property IOSTANDARD LVCMOS33 [get_ports *]\n")
+        for port in ports:
+            f.write(f"set_property IOSTANDARD LVCMOS33 [get_ports {port}]\n")
     return path
 
 
@@ -703,7 +732,7 @@ export GHDL_PREFIX="""
                     xdc_arg = " --xdc " + shlex.quote(SYN.PIN_CONSTRAINTS_FILE)
                 elif not is_final_top:
                     characterization_xdc = _WRITE_XC7_CHARACTERIZATION_XDC(
-                        output_directory
+                        output_directory, top_entity_name
                     )
                     xdc_arg = " --xdc " + shlex.quote(characterization_xdc)
                 fasm_arg = ""
