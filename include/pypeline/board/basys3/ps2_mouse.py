@@ -25,6 +25,8 @@ class ps2_mouse_t(NamedTuple):
     left: uint1_t
     middle: uint1_t
     right: uint1_t
+    wheel: uint8_t
+    wheel_mode: uint1_t
     ready: uint1_t
 
 
@@ -39,7 +41,8 @@ _ST_TX_BITS = 4
 _ST_TX_STOP_ACK = 5
 _ST_TX_RELEASE = 6
 _ST_WAIT_FA = 7
-_ST_STREAM = 8
+_ST_WAIT_ID = 8
+_ST_STREAM = 9
 
 # 100 MHz board-clock counts.
 _POWER_WAIT_CYCLES = 2_000_000   # 20 ms; failed early attempts simply retry.
@@ -62,6 +65,8 @@ def ps2_mouse_io():
     state: Reg[uint4_t] = _ST_POWER_WAIT
     timer: Reg[uint32_t] = 0
     tx_bit: Reg[uint4_t] = 0
+    tx_byte: Reg[uint8_t] = 243  # 0xF3, first IntelliMouse negotiation command.
+    init_step: Reg[uint4_t] = 0
 
     # Device-to-host byte receiver.
     rx_bit: Reg[uint4_t] = 0
@@ -69,17 +74,21 @@ def ps2_mouse_io():
     rx_parity: Reg[uint1_t] = 0
     rx_parity_ok: Reg[uint1_t] = 0
 
-    # Three-byte packet assembly.
+    # Three- or four-byte packet assembly (four bytes in IntelliMouse wheel mode).
     packet_byte: Reg[uint2_t] = 0
     status: Reg[uint8_t] = 0
     dx: Reg[uint8_t] = 0
+    dy: Reg[uint8_t] = 0
 
-    # Public mouse state.
+    # Public mouse state.  `wheel` is a wrapping cumulative position so a wheel
+    # detent remains observable long after the packet-level delta has passed.
     x: Reg[uint10_t] = 320
     y: Reg[uint9_t] = 240
     left: Reg[uint1_t] = 0
     middle: Reg[uint1_t] = 0
     right: Reg[uint1_t] = 0
+    wheel: Reg[uint8_t] = 0
+    wheel_mode: Reg[uint1_t] = 0
     ready: Reg[uint1_t] = 0
 
     # Publish only registered state.  Pypeline forwards later Reg assignments
@@ -92,6 +101,8 @@ def ps2_mouse_io():
     out_left: uint1_t = left
     out_middle: uint1_t = middle
     out_right: uint1_t = right
+    out_wheel: uint8_t = wheel
+    out_wheel_mode: uint1_t = wheel_mode
     out_ready: uint1_t = ready
 
     # Sample first; edge flags intentionally describe the previously synchronized
@@ -115,9 +126,11 @@ def ps2_mouse_io():
     rx_valid: uint1_t = 0
     rx_byte: uint8_t = rx_shift
 
-    # Never let our receiver interpret the device clock pulses used while we are
-    # transmitting.  Receive only while awaiting F4's 0xFA response or streaming.
-    receiving: uint1_t = (state == _ST_WAIT_FA) | (state == _ST_STREAM)
+    # Never let our receiver interpret device clocks used while transmitting.
+    # During initialization we receive command ACKs and, after F2, the device ID.
+    receiving: uint1_t = (
+        (state == _ST_WAIT_FA) | (state == _ST_WAIT_ID) | (state == _ST_STREAM)
+    )
     if receiving:
         if clk_fall:
             if rx_bit == 0:
@@ -152,6 +165,9 @@ def ps2_mouse_io():
         ready = 0
         if timer >= _POWER_WAIT_CYCLES - 1:
             timer = 0
+            init_step = 0
+            tx_byte = 243  # 0xF3 Set Sample Rate
+            wheel_mode = 0
             state = _ST_TX_INHIBIT
         else:
             timer = timer + 1
@@ -188,25 +204,28 @@ def ps2_mouse_io():
             timer = timer + 1
 
     elif state == _ST_TX_BITS:
-        # F4 = 11110100b, LSB first.  Bit 8 is odd parity (0 for F4: five data 1s).
+        # Commands and parameters are sent LSB-first.  Bit 8 supplies odd parity.
         if tx_bit == 0:
-            PS2Data = 0
+            PS2Data = tx_byte[0]
         elif tx_bit == 1:
-            PS2Data = 0
+            PS2Data = tx_byte[1]
         elif tx_bit == 2:
-            PS2Data = 1
+            PS2Data = tx_byte[2]
         elif tx_bit == 3:
-            PS2Data = 0
+            PS2Data = tx_byte[3]
         elif tx_bit == 4:
-            PS2Data = 1
+            PS2Data = tx_byte[4]
         elif tx_bit == 5:
-            PS2Data = 1
+            PS2Data = tx_byte[5]
         elif tx_bit == 6:
-            PS2Data = 1
+            PS2Data = tx_byte[6]
         elif tx_bit == 7:
-            PS2Data = 1
+            PS2Data = tx_byte[7]
         else:
-            PS2Data = 0
+            PS2Data = ~(
+                tx_byte[0] ^ tx_byte[1] ^ tx_byte[2] ^ tx_byte[3]
+                ^ tx_byte[4] ^ tx_byte[5] ^ tx_byte[6] ^ tx_byte[7]
+            )
 
         if clk_fall:
             timer = 0
@@ -251,13 +270,65 @@ def ps2_mouse_io():
         if rx_valid:
             timer = 0
             if rx_byte == 250:  # 0xFA command acknowledge
-                ready = 1
-                packet_byte = 0
-                state = _ST_STREAM
+                # IntelliMouse wheel negotiation is the canonical sample-rate
+                # sequence 200, 100, 80 followed by F2 Read Device ID.  Every
+                # command byte and parameter byte is separately acknowledged.
+                if init_step == 0:
+                    tx_byte = 200
+                    init_step = 1
+                    state = _ST_TX_INHIBIT
+                elif init_step == 1:
+                    tx_byte = 243  # F3
+                    init_step = 2
+                    state = _ST_TX_INHIBIT
+                elif init_step == 2:
+                    tx_byte = 100
+                    init_step = 3
+                    state = _ST_TX_INHIBIT
+                elif init_step == 3:
+                    tx_byte = 243  # F3
+                    init_step = 4
+                    state = _ST_TX_INHIBIT
+                elif init_step == 4:
+                    tx_byte = 80
+                    init_step = 5
+                    state = _ST_TX_INHIBIT
+                elif init_step == 5:
+                    tx_byte = 242  # F2 Read Device ID
+                    init_step = 6
+                    state = _ST_TX_INHIBIT
+                elif init_step == 6:
+                    state = _ST_WAIT_ID
+                else:
+                    # F4 Enable Data Reporting has been acknowledged.
+                    ready = 1
+                    packet_byte = 0
+                    state = _ST_STREAM
             else:
+                # Retry the current byte after an unexpected response.
                 state = _ST_TX_INHIBIT
         elif timer >= _RESPONSE_TIMEOUT_CYCLES - 1:
             timer = 0
+            state = _ST_TX_INHIBIT
+        else:
+            timer = timer + 1
+
+    elif state == _ST_WAIT_ID:
+        if rx_valid:
+            timer = 0
+            # ID 3 is IntelliMouse wheel mode; accept ID 4 too in case a bridge
+            # exposes the five-button extension.  ID 0 gracefully retains the
+            # working classic three-byte packet format.
+            wheel_mode = (rx_byte == 3) | (rx_byte == 4)
+            tx_byte = 244  # F4 Enable Data Reporting
+            init_step = 7
+            state = _ST_TX_INHIBIT
+        elif timer >= _RESPONSE_TIMEOUT_CYCLES - 1:
+            # Failure to obtain an ID must not regress ordinary mouse support.
+            timer = 0
+            wheel_mode = 0
+            tx_byte = 244
+            init_step = 7
             state = _ST_TX_INHIBIT
         else:
             timer = timer + 1
@@ -273,9 +344,8 @@ def ps2_mouse_io():
             elif packet_byte == 1:
                 dx = rx_byte
                 packet_byte = 2
-            else:
-                dy: uint8_t = rx_byte
-                packet_byte = 0
+            elif packet_byte == 2:
+                dy = rx_byte
 
                 left = status[0]
                 right = status[1]
@@ -299,17 +369,33 @@ def ps2_mouse_io():
                 # PS/2 positive Y is upward; VGA Y increases downward.
                 if status[7] == 0:
                     if status[5]:
-                        y_mag: uint9_t = 256 - dy
+                        y_mag: uint9_t = 256 - rx_byte
                         y_sum: uint10_t = y + y_mag
                         if y_sum > 479:
                             y = 479
                         else:
                             y = y_sum[8:0]
                     else:
-                        if y >= dy:
-                            y = y - dy
+                        if y >= rx_byte:
+                            y = y - rx_byte
                         else:
                             y = 0
+
+                if wheel_mode:
+                    packet_byte = 3
+                else:
+                    packet_byte = 0
+            else:
+                # IntelliMouse Z is a signed four-bit two's-complement delta.
+                # Accumulate modulo 256 so every detent remains visible to a
+                # slow video consumer without needing a pulse stretcher.
+                z: uint4_t = rx_byte[3:0]
+                if z[3]:
+                    z_mag: uint5_t = 16 - z
+                    wheel = wheel - z_mag
+                else:
+                    wheel = wheel + z
+                packet_byte = 0
 
     mouse = ps2_mouse_t(
         x=out_x,
@@ -317,5 +403,7 @@ def ps2_mouse_io():
         left=out_left,
         middle=out_middle,
         right=out_right,
+        wheel=out_wheel,
+        wheel_mode=out_wheel_mode,
         ready=out_ready,
     )
