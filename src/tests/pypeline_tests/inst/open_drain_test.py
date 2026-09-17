@@ -31,11 +31,19 @@ def test_open_drain_final_top_contract():
         logic = ps.LogicInstLookupTable[main_name]
         mtp.TimingParamsLookupTable[main_name] = SYN.TimingParams(main_name, logic)
 
+    VHDL.WRITE_GLOBAL_WIRES_VHDL_PACKAGE(ps)
     VHDL.WRITE_MULTIMAIN_TOP(ps, mtp, is_final_top=True)
     top_path = os.path.join(out_dir, "top", "top.vhd")
     with open(top_path) as f:
         text = f.read()
+    pkg_path = os.path.join(out_dir, "global_wires_pkg.pkg.vhd")
+    with open(pkg_path) as f:
+        pkg_text = f.read()
 
+    # An OpenDrain writer has a true duplex interface: drive intent leaves the
+    # function while resolved-pad readback independently enters it.
+    assert "PS2Clk : unsigned(0 downto 0);" in pkg_text
+    assert "PS2Clk_PYPELINE_READBACK : unsigned(0 downto 0);" in pkg_text
     assert "PS2Clk : inout unsigned(0 downto 0)" in text
     assert (
         "PS2Clk <= to_unsigned(0, 1) when "

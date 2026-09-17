@@ -1520,68 +1520,6 @@ begin
 
         text += "\n"
 
-    # Readback feeds for UNSHARED wires: a global wire used ONLY by its single
-    # writer function (which also reads it back) has GLOBAL_VAR_IS_SHARED False,
-    # so the direct-connect loop above skipped it -- but the writer's entity
-    # still has a <var>_PYPELINE_READBACK global_to_module input that must be driven.
-    # OpenDrain is special: its writer's value controls the physical pad even in
-    # this unshared case, while readback samples the resolved pad rather than the
-    # writer value.
-    for var_name, var_info in parser_state.global_vars.items():
-        if var_name in shared_global_vars:
-            continue
-        if var_name in parser_state.open_drain_wires:
-            write_funcs = []
-            for func_name in var_info.used_in_funcs:
-                func_logic = parser_state.FuncLogicLookupTable[func_name]
-                if var_name in func_logic.state_regs or var_name in func_logic.write_only_global_wires:
-                    write_funcs.append(func_name)
-            if len(write_funcs) != 1:
-                raise Exception(
-                    f"OpenDrain global {var_name} must have exactly one writer, got {write_funcs}"
-                )
-            write_func = write_funcs[0]
-            write_insts = parser_state.FuncToInstances[write_func]
-            if len(write_insts) != 1:
-                raise Exception(
-                    f"More than one instance trying to write to OpenDrain global {var_name}: {write_insts}!"
-                )
-            write_func_inst = list(write_insts)[0]
-            toks = write_func_inst.split(C_TO_LOGIC.SUBMODULE_MARKER)
-            write_text = "module_to_global." + C_TO_LOGIC.RECURSIVE_FIND_MAIN_FUNC_FROM_INST(
-                write_func_inst, parser_state
-            )
-            for tok in toks[1:]:
-                write_text += "." + WIRE_TO_VHDL_NAME(tok)
-            write_text += "." + var_name
-            text += (
-                f"{var_name} <= to_unsigned(0, 1) when {write_text} = to_unsigned(0, 1) "
-                f"else (others => 'Z');\n"
-            )
-        for func_name in var_info.used_in_funcs:
-            if func_name not in parser_state.FuncLogicLookupTable:
-                continue
-            func_logic = parser_state.FuncLogicLookupTable[func_name]
-            rb_field = getattr(func_logic, "readback_global_wires", {}).get(var_name)
-            if rb_field is None:
-                continue
-            if func_name not in parser_state.FuncToInstances:
-                continue
-            for func_inst in parser_state.FuncToInstances[func_name]:
-                toks = func_inst.split(C_TO_LOGIC.SUBMODULE_MARKER)
-                t = C_TO_LOGIC.RECURSIVE_FIND_MAIN_FUNC_FROM_INST(
-                    func_inst, parser_state
-                )
-                for tok in toks[1:]:
-                    t += "." + WIRE_TO_VHDL_NAME(tok)
-                if var_name in parser_state.open_drain_wires:
-                    text += f"global_to_module.{t}.{rb_field} <= {var_name};\n"
-                else:
-                    text += (
-                        f"global_to_module.{t}.{rb_field} <= "
-                        f"{C_TYPE_STR_TO_VHDL_NULL_STR(var_info.type_name, parser_state)};\n"
-                    )
-
     # WRITE SIDE connections for instance array special multi driver global wires, etc
     write_inst_array_vars = set()
     for var_name, var_info in parser_state.global_vars.items():
@@ -3721,6 +3659,11 @@ port map
 
 
 def GLOBAL_VAR_IS_SHARED(var_name, parser_state):
+    # OpenDrain is inherently shared even when a single hardware function is its
+    # only Pypeline user: that function drives an intent value outward while also
+    # sampling the independently resolved physical pad value back inward.
+    if var_name in parser_state.open_drain_wires:
+        return True
     if var_name in parser_state.output_wires:
         return True
     if var_name in parser_state.input_wires:

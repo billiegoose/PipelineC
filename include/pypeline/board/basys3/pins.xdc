@@ -114,6 +114,14 @@ set_property IOSTANDARD LVCMOS33 [get_ports RsRx]
 set_property LOC A18 [get_ports RsTx]
 set_property IOSTANDARD LVCMOS33 [get_ports RsTx]
 
+# USB HID bridge (PS/2 open-drain clock/data)
+set_property LOC C17 [get_ports PS2Clk]
+set_property IOSTANDARD LVCMOS33 [get_ports PS2Clk]
+set_property PULLUP true [get_ports PS2Clk]
+set_property LOC B17 [get_ports PS2Data]
+set_property IOSTANDARD LVCMOS33 [get_ports PS2Data]
+set_property PULLUP true [get_ports PS2Data]
+
 # Built-in 12-bit VGA resistor DAC
 set_property LOC G19 [get_ports VGA_R0]
 set_property IOSTANDARD LVCMOS33 [get_ports VGA_R0]
