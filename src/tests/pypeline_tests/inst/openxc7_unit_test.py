@@ -86,18 +86,23 @@ def test_xc7_characterization_xdc_sets_iostandard_without_board_locs():
             "entity timing_top is\n"
             "port(\n"
             " clk : in std_logic;\n"
-            " left : in unsigned(0 downto 0);\n"
-            " right : in unsigned(0 downto 0);\n"
-            " return_output : out unsigned(0 downto 0));\n"
+            " cond : in unsigned(0 downto 0);\n"
+            " iftrue : in unsigned(1 downto 0);\n"
+            " iffalse : in unsigned(1 downto 0);\n"
+            " return_output : out unsigned(1 downto 0));\n"
             "end timing_top;\n"
         )
         xdc_path = OPEN_TOOLS._WRITE_XC7_CHARACTERIZATION_XDC(tmp_dir, top_name)
         xdc_text = Path(xdc_path).read_text()
         assert xdc_text == (
             "set_property IOSTANDARD LVCMOS33 [get_ports clk]\\n"
-            "set_property IOSTANDARD LVCMOS33 [get_ports left]\\n"
-            "set_property IOSTANDARD LVCMOS33 [get_ports right]\\n"
-            "set_property IOSTANDARD LVCMOS33 [get_ports return_output]\\n"
+            "set_property IOSTANDARD LVCMOS33 [get_ports cond]\\n"
+            "set_property IOSTANDARD LVCMOS33 [get_ports iftrue[0]]\\n"
+            "set_property IOSTANDARD LVCMOS33 [get_ports iftrue[1]]\\n"
+            "set_property IOSTANDARD LVCMOS33 [get_ports iffalse[0]]\\n"
+            "set_property IOSTANDARD LVCMOS33 [get_ports iffalse[1]]\\n"
+            "set_property IOSTANDARD LVCMOS33 [get_ports return_output[0]]\\n"
+            "set_property IOSTANDARD LVCMOS33 [get_ports return_output[1]]\\n"
         )
         assert "LOC" not in xdc_text
 

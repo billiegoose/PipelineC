@@ -567,7 +567,29 @@ def _WRITE_XC7_CHARACTERIZATION_XDC(output_directory, top_entity_name):
                 or decl.startswith("inout ")
             ):
                 continue
-            ports.extend(name.strip() for name in names.split(",") if name.strip())
+            base_names = [name.strip() for name in names.split(",") if name.strip()]
+            range_text = None
+            if "(" in decl and ")" in decl:
+                range_text = decl.split("(", 1)[1].split(")", 1)[0].strip()
+            indices = None
+            if range_text is not None:
+                if " downto " in range_text:
+                    high_text, low_text = range_text.split(" downto ", 1)
+                    if high_text.isdigit() and low_text.isdigit():
+                        high = int(high_text)
+                        low = int(low_text)
+                        indices = list(range(low, high + 1))
+                elif " to " in range_text:
+                    low_text, high_text = range_text.split(" to ", 1)
+                    if low_text.isdigit() and high_text.isdigit():
+                        low = int(low_text)
+                        high = int(high_text)
+                        indices = list(range(low, high + 1))
+            for name in base_names:
+                if indices is None or len(indices) == 1:
+                    ports.append(name)
+                else:
+                    ports.extend(f"{name}[{index}]" for index in indices)
 
     if not ports:
         raise Exception("Could not find characterization top ports in " + top_vhdl)
