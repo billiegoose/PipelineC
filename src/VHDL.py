@@ -463,6 +463,9 @@ port(
         if var_name in parser_state.input_wires:
             vhdl_type = C_TYPE_STR_TO_VHDL_TYPE_STR(var_info.type_name, parser_state)
             global_io_text += var_name + " : in " + vhdl_type + ";\n"
+        if var_name in parser_state.open_drain_wires:
+            vhdl_type = C_TYPE_STR_TO_VHDL_TYPE_STR(var_info.type_name, parser_state)
+            global_io_text += var_name + " : inout " + vhdl_type + ";\n"
     if global_io_text != "":
         text += (
             """
@@ -1422,6 +1425,16 @@ begin
                     f"Looks like variable {var_name} is never written? Maybe missing a #pragma MAIN somewhere?"
                 )
 
+        # OpenDrain[uint1_t]: the writer value is drive intent, not the pad
+        # value. Zero actively pulls low; one releases the resolved pin to Z.
+        if var_name in parser_state.open_drain_wires:
+            if multi_writer_regions is not None:
+                raise Exception(f"OpenDrain global {var_name} must have exactly one writer")
+            text += (
+                f"{var_name} <= to_unsigned(0, 1) when {write_text} = to_unsigned(0, 1) "
+                f"else (others => 'Z');\n"
+            )
+
         # One reader of the wire might be an output port
         if var_name in parser_state.output_wires:
             if multi_writer_regions is not None:
@@ -1472,7 +1485,12 @@ begin
                     else:
                         text += f"{read_text}{suffix} <= {C_TYPE_STR_TO_VHDL_NULL_STR(region_type, parser_state)};\n"
             else:
-                text += f"{read_text} <= {write_text};\n"
+                read_source = (
+                    var_name
+                    if var_name in parser_state.open_drain_wires
+                    else write_text
+                )
+                text += f"{read_text} <= {read_source};\n"
 
         # Feed writer functions that also read back their own wire
         # (readback_global_wires): their <var>_PYPELINE_READBACK global_to_module input
@@ -1495,19 +1513,51 @@ begin
                     else:
                         text += f"{rb_text}{suffix} <= {C_TYPE_STR_TO_VHDL_NULL_STR(region_type, parser_state)};\n"
             else:
-                text += f"{rb_text} <= {C_TYPE_STR_TO_VHDL_NULL_STR(var_info.type_name, parser_state)};\n"
+                if var_name in parser_state.open_drain_wires:
+                    text += f"{rb_text} <= {var_name};\n"
+                else:
+                    text += f"{rb_text} <= {C_TYPE_STR_TO_VHDL_NULL_STR(var_info.type_name, parser_state)};\n"
 
         text += "\n"
 
     # Readback feeds for UNSHARED wires: a global wire used ONLY by its single
     # writer function (which also reads it back) has GLOBAL_VAR_IS_SHARED False,
     # so the direct-connect loop above skipped it -- but the writer's entity
-    # still has a <var>_PYPELINE_READBACK global_to_module input that must be driven
-    # (all zeros: no other writers exist, and own regions read zero by
-    # definition).
+    # still has a <var>_PYPELINE_READBACK global_to_module input that must be driven.
+    # OpenDrain is special: its writer's value controls the physical pad even in
+    # this unshared case, while readback samples the resolved pad rather than the
+    # writer value.
     for var_name, var_info in parser_state.global_vars.items():
         if var_name in shared_global_vars:
             continue
+        if var_name in parser_state.open_drain_wires:
+            write_funcs = []
+            for func_name in var_info.used_in_funcs:
+                func_logic = parser_state.FuncLogicLookupTable[func_name]
+                if var_name in func_logic.state_regs or var_name in func_logic.write_only_global_wires:
+                    write_funcs.append(func_name)
+            if len(write_funcs) != 1:
+                raise Exception(
+                    f"OpenDrain global {var_name} must have exactly one writer, got {write_funcs}"
+                )
+            write_func = write_funcs[0]
+            write_insts = parser_state.FuncToInstances[write_func]
+            if len(write_insts) != 1:
+                raise Exception(
+                    f"More than one instance trying to write to OpenDrain global {var_name}: {write_insts}!"
+                )
+            write_func_inst = list(write_insts)[0]
+            toks = write_func_inst.split(C_TO_LOGIC.SUBMODULE_MARKER)
+            write_text = "module_to_global." + C_TO_LOGIC.RECURSIVE_FIND_MAIN_FUNC_FROM_INST(
+                write_func_inst, parser_state
+            )
+            for tok in toks[1:]:
+                write_text += "." + WIRE_TO_VHDL_NAME(tok)
+            write_text += "." + var_name
+            text += (
+                f"{var_name} <= to_unsigned(0, 1) when {write_text} = to_unsigned(0, 1) "
+                f"else (others => 'Z');\n"
+            )
         for func_name in var_info.used_in_funcs:
             if func_name not in parser_state.FuncLogicLookupTable:
                 continue
@@ -1524,10 +1574,13 @@ begin
                 )
                 for tok in toks[1:]:
                     t += "." + WIRE_TO_VHDL_NAME(tok)
-                text += (
-                    f"global_to_module.{t}.{rb_field} <= "
-                    f"{C_TYPE_STR_TO_VHDL_NULL_STR(var_info.type_name, parser_state)};\n"
-                )
+                if var_name in parser_state.open_drain_wires:
+                    text += f"global_to_module.{t}.{rb_field} <= {var_name};\n"
+                else:
+                    text += (
+                        f"global_to_module.{t}.{rb_field} <= "
+                        f"{C_TYPE_STR_TO_VHDL_NULL_STR(var_info.type_name, parser_state)};\n"
+                    )
 
     # WRITE SIDE connections for instance array special multi driver global wires, etc
     write_inst_array_vars = set()
