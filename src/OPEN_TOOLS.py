@@ -536,6 +536,20 @@ def SYN_AND_REPORT_TIMING_MULTIMAIN(parser_state, multimain_timing_params):
 
 # MULTIMAIN OR SINGLE INSTANCE
 # Returns parsed timing report
+def _WRITE_XC7_CHARACTERIZATION_XDC(output_directory):
+    """Give synthetic OpenXC7 timing tops an electrical I/O standard.
+
+    Characterization tops are not real board designs, so they intentionally
+    have no package LOC constraints.  nextpnr-xilinx nevertheless requires an
+    IOSTANDARD for every PAD; a wildcard property is sufficient for these
+    temporary timing-only circuits.
+    """
+    path = os.path.join(output_directory, "openxc7_characterization.xdc")
+    with open(path, "w") as f:
+        f.write("set_property IOSTANDARD LVCMOS33 [get_ports *]\n")
+    return path
+
+
 def SYN_AND_REPORT_TIMING_NEW(
     parser_state,
     multimain_timing_params,
@@ -687,6 +701,11 @@ export GHDL_PREFIX="""
                 xdc_arg = ""
                 if is_final_top and SYN.PIN_CONSTRAINTS_FILE:
                     xdc_arg = " --xdc " + shlex.quote(SYN.PIN_CONSTRAINTS_FILE)
+                elif not is_final_top:
+                    characterization_xdc = _WRITE_XC7_CHARACTERIZATION_XDC(
+                        output_directory
+                    )
+                    xdc_arg = " --xdc " + shlex.quote(characterization_xdc)
                 fasm_arg = ""
                 if is_final_top:
                     fasm_arg = " --fasm " + shlex.quote(top_entity_name + ".fasm")

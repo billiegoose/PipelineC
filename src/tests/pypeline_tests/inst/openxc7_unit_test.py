@@ -79,6 +79,14 @@ def test_basys3_board_package_pins_clock_and_part():
     assert "IOSTANDARD LVCMOS33 [get_ports led0]" in xdc_text
 
 
+def test_xc7_characterization_xdc_sets_iostandard_without_board_locs():
+    with tempfile.TemporaryDirectory() as tmp_dir:
+        xdc_path = OPEN_TOOLS._WRITE_XC7_CHARACTERIZATION_XDC(tmp_dir)
+        xdc_text = Path(xdc_path).read_text()
+        assert xdc_text == "set_property IOSTANDARD LVCMOS33 [get_ports *]\\n"
+        assert "LOC" not in xdc_text
+
+
 def test_pipelinec_cli_exposes_openxc7_override():
     repo_root = Path(__file__).resolve().parents[4]
     cli_text = (repo_root / "src" / "pipelinec").read_text()
