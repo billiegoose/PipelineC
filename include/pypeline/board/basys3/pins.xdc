@@ -107,3 +107,9 @@ set_property LOC U7 [get_ports CG]
 set_property IOSTANDARD LVCMOS33 [get_ports CG]
 set_property LOC V7 [get_ports DP]
 set_property IOSTANDARD LVCMOS33 [get_ports DP]
+
+# USB-UART bridge
+set_property LOC B18 [get_ports RsRx]
+set_property IOSTANDARD LVCMOS33 [get_ports RsRx]
+set_property LOC A18 [get_ports RsTx]
+set_property IOSTANDARD LVCMOS33 [get_ports RsTx]

@@ -65,3 +65,8 @@ CE: Output[uint1_t]
 CF: Output[uint1_t]
 CG: Output[uint1_t]
 DP: Output[uint1_t]
+
+# USB-UART bridge signals, using Digilent's Basys 3 signal names.
+# RsRx is data from the host into the FPGA; RsTx is data from the FPGA to the host.
+RsRx: Input[uint1_t]
+RsTx: Output[uint1_t]
