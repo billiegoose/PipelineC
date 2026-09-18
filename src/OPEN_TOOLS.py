@@ -415,9 +415,13 @@ class ParsedTimingReport:
         tok1 = "Max frequency for clock"
         for line in syn_output.split("\n"):
             if tok1 in line:
-                clk_str = line.split(tok1)[1]
-                clk_name = clk_str.split(":")[0].strip().strip("'")
-                freqs_str = clk_str.split(":")[1]
+                clk_str = line.split(tok1, 1)[1]
+                # Synthesized clock net names may themselves contain colons
+                # (for example Yosys auto names such as
+                # '$auto$clkbufmap.cc:294:execute$2176').  The final colon is
+                # the delimiter before nextpnr's frequency text.
+                clk_name, freqs_str = clk_str.rsplit(":", 1)
+                clk_name = clk_name.strip().strip("'")
                 # print("clk_str",clk_str)
                 # print("freqs_str",freqs_str)
                 actual_mhz = float(freqs_str.split("MHz")[0])
@@ -664,10 +668,16 @@ def SYN_AND_REPORT_TIMING_NEW(
         # -v --debug
         if not YOSYS_JSON_ONLY:
             if is_xc7:
+                # Characterization tops are synthetic register-to-register timing
+                # shells, not physical board interfaces. Avoid inferred I/O pads
+                # there: unconstrained synthetic ports can otherwise be assigned
+                # to unbonded/nonexistent package BELs by nextpnr-xilinx. Final
+                # tops still need normal I/O pads for board-constrained P&R.
+                xc7_iopad_arg = "" if is_final_top else " -noiopad"
                 yosys_script_arg = WRITE_YOSYS_SCRIPT(
                     [
                         f"ghdl --std=08 -frelaxed {vhdl_files_texts} -e {top_entity_name}",
-                        f"synth_xilinx -flatten -abc9 -arch xc7 -top {top_entity_name}",
+                        f"synth_xilinx -flatten -abc9 -arch xc7{xc7_iopad_arg} -top {top_entity_name}",
                         f"write_json {top_entity_name}.json",
                     ],
                     output_directory + "/" + top_entity_name + "_yosys.ys",
@@ -688,26 +698,20 @@ export GHDL_PREFIX="""
                 if is_final_top and SYN.PIN_CONSTRAINTS_FILE:
                     xdc_arg = " --xdc " + shlex.quote(SYN.PIN_CONSTRAINTS_FILE)
                 elif not is_final_top:
-                    characterization_xdc = os.path.join(
-                        output_directory, "openxc7_characterization.xdc"
-                    )
-                    characterization_generator = os.path.join(
+                    characterization_netlist_helper = os.path.join(
                         os.path.dirname(os.path.abspath(__file__)),
-                        "openxc7_characterization_xdc.py",
+                        "openxc7_characterization_netlist.py",
                     )
                     f.write(
                         shlex.quote(sys.executable)
                         + " "
-                        + shlex.quote(characterization_generator)
+                        + shlex.quote(characterization_netlist_helper)
                         + " "
                         + shlex.quote(top_entity_name + ".json")
-                        + " "
-                        + shlex.quote(characterization_xdc)
                         + " "
                         + shlex.quote(top_entity_name)
                         + "\n"
                     )
-                    xdc_arg = " --xdc " + shlex.quote(characterization_xdc)
                 fasm_arg = ""
                 if is_final_top:
                     fasm_arg = " --fasm " + shlex.quote(top_entity_name + ".fasm")

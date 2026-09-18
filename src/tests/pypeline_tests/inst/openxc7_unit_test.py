@@ -80,42 +80,73 @@ def test_basys3_board_package_pins_clock_and_part():
     assert "IOSTANDARD LVCMOS33 [get_ports LD0]" in xdc_text
 
 
-def test_xc7_characterization_xdc_uses_synthesized_flattened_ports():
-    import openxc7_characterization_xdc
+def test_openxc7_characterization_avoids_physical_iopads():
+    import openxc7_characterization_netlist
+
+    repo_root = Path(__file__).resolve().parents[4]
+    open_tools_text = (repo_root / "src" / "OPEN_TOOLS.py").read_text()
+    assert 'xc7_iopad_arg = "" if is_final_top else " -noiopad"' in open_tools_text
+    assert "xc7{xc7_iopad_arg} -top {top_entity_name}" in open_tools_text
+    assert "openxc7_characterization_netlist.py" in open_tools_text
+    assert "openxc7_characterization.xdc" not in open_tools_text
 
     with tempfile.TemporaryDirectory() as tmp_dir:
-        top_name = "timing_top"
         json_path = Path(tmp_dir) / "top.json"
-        xdc_path = Path(tmp_dir) / "top.xdc"
         json_path.write_text(
             json.dumps(
                 {
                     "modules": {
-                        top_name: {
+                        "timing_top": {
                             "ports": {
                                 "clk": {"direction": "input", "bits": [2]},
-                                "sig[pos]": {"direction": "input", "bits": list(range(3, 27))},
-                                "sig[active]": {"direction": "input", "bits": [27]},
-                                "return_output[r]": {"direction": "output", "bits": [28, 29, 30, 31]},
-                                "return_output[hs]": {"direction": "output", "bits": [32]},
-                            }
+                                "a": {"direction": "input", "bits": [3, 4]},
+                                "y": {"direction": "output", "bits": [5]},
+                            },
+                            "netnames": {
+                                "clk": {"bits": [2]},
+                                "a_input_reg": {"bits": [6, 7]},
+                                "y_output_reg": {"bits": [8]},
+                            },
+                            "cells": {
+                                "input_ff": {
+                                    "type": "FDRE",
+                                    "connections": {"C": [9], "D": [3], "Q": [6]},
+                                },
+                                "output_ff": {
+                                    "type": "FDRE",
+                                    "connections": {"C": [9], "D": [10], "Q": [5]},
+                                },
+                            },
                         }
                     }
                 }
             )
         )
-        openxc7_characterization_xdc.write_characterization_xdc(
-            json_path, xdc_path, top_name
-        )
-        xdc_text = xdc_path.read_text()
-        assert "[get_ports {clk}]" in xdc_text
-        assert "[get_ports {sig[pos][0]}]" in xdc_text
-        assert "[get_ports {sig[pos][23]}]" in xdc_text
-        assert "[get_ports {sig[active]}]" in xdc_text
-        assert "[get_ports {return_output[r][0]}]" in xdc_text
-        assert "[get_ports {return_output[r][3]}]" in xdc_text
-        assert "[get_ports {return_output[hs]}]" in xdc_text
-        assert "LOC" not in xdc_text
+        openxc7_characterization_netlist.strip_top_ports(json_path, "timing_top")
+        netlist = json.loads(json_path.read_text())
+        top = netlist["modules"]["timing_top"]
+        assert top["ports"] == {}
+        assert top["netnames"]["a_input_reg"]["bits"] == [6, 7]
+        assert top["cells"]["input_ff"]["type"] == "FDRE"
+        assert top["cells"]["output_ff"]["type"] == "FDRE"
+
+
+def test_openxc7_timing_parser_accepts_colons_in_synthesized_clock_names():
+    text = """\
+Info: Critical path report for clock '$auto$clkbufmap.cc:294:execute$2176' (posedge -> posedge):
+Info: curr total
+Info:  0.1  0.1  Source input_ff.Q
+Info:  1.8  1.9    Net logic
+Info:                Sink output_ff.D
+Info:  0.1  2.0  Setup output_ff.D
+Info: 1.3 ns logic, 0.7 ns routing
+Info: Max frequency for clock '$auto$clkbufmap.cc:294:execute$2176': 498.50 MHz (FAIL at 1000.00 MHz)
+"""
+    report = OPEN_TOOLS.ParsedTimingReport(text)
+    assert "$auto$clkbufmap.cc:294:execute$2176" in report.path_reports
+    path = report.path_reports["$auto$clkbufmap.cc:294:execute$2176"]
+    assert abs(path.path_delay_ns - (1000.0 / 498.50)) < 1e-9
+    assert path.source_ns_per_clock == 1.0
 
 
 def test_openxc7_comb_timing_uses_board_constrained_final_top():
