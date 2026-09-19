@@ -258,11 +258,12 @@ parser.add_argument(
     "--syn_tool",
     type=str,
     default=None,
-    choices=["pyrtl", "sky130"],
-    help="Force a specific timing-estimation SYN_TOOL regardless of PART. "
+    choices=["pyrtl", "sky130", "openxc7"],
+    help="Force a specific synthesis/timing SYN_TOOL regardless of PART. "
     "'pyrtl' = generic PyRTL-based estimate (default when no PART is set). "
-    "'sky130' = real sky130 liberty NLDM STA (src/DEVICE_MODELS.py). Lets "
-    "both be compared on one unmodified source file.",
+    "'sky130' = real sky130 liberty NLDM STA (src/DEVICE_MODELS.py). "
+    "'openxc7' = open-source Xilinx 7-series flow using Yosys/GHDL, "
+    "nextpnr-xilinx, and Project X-Ray.",
 )
 parser.add_argument(
     "--mux_delay_by_width",
@@ -377,6 +378,8 @@ if args.syn_tool == "pyrtl":
     SYN.SYN_TOOL = SYN.PYRTL
 elif args.syn_tool == "sky130":
     SYN.SYN_TOOL = SYN.DEVICE_MODELS
+elif args.syn_tool == "openxc7":
+    SYN.SYN_TOOL = SYN.OPEN_TOOLS
 # Mux path-delay cache key override (None = automatic per SYN_TOOL)
 SYN.MUX_DELAY_KEY_BY_WIDTH = args.mux_delay_by_width
 # AUTO_FSM area-search escape hatch: real sky130 um2 is used automatically

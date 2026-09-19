@@ -3649,10 +3649,21 @@ def DO_THROUGHPUT_SWEEP(
             print("Using --coarse and --comb doesnt make sense? TODO fix?")
             sys.exit(-1)
         else:
-            # Regular multi main top comb logic
-            timing_report = SYN_TOOL.SYN_AND_REPORT_TIMING_MULTIMAIN(
-                parser_state, multimain_timing_params
-            )
+            # Regular multi main top comb logic. OpenXC7 cannot reliably place
+            # unconstrained synthetic top-level PADs on xc7 chipdbs (larger
+            # tops can land on unbonded I/O BELs). --comb has already written
+            # the exact final zero-pipeline top, so time that board-constrained
+            # implementation instead.
+            if SYN_TOOL is OPEN_TOOLS and OPEN_TOOLS.IS_XC7_PART(parser_state.part):
+                timing_report = OPEN_TOOLS.SYN_AND_REPORT_TIMING_NEW(
+                    parser_state,
+                    multimain_timing_params,
+                    is_final_top=True,
+                )
+            else:
+                timing_report = SYN_TOOL.SYN_AND_REPORT_TIMING_MULTIMAIN(
+                    parser_state, multimain_timing_params
+                )
 
         # Print a little timing info to characterize comb logic
         clk_to_mhz, constraints_filepath = GET_CLK_TO_MHZ_AND_CONSTRAINTS_PATH(
