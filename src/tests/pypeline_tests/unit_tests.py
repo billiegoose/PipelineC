@@ -292,6 +292,15 @@ def get_tests() -> list:
             cmd=[INST_DIR / "openxc7_unit_test.py"],
         )
     )
+    # Open-drain chip-boundary semantics: single writer, resolved pad readback,
+    # and VHDL inout/tri-state generation.
+    tests.append(
+        Test(
+            name="open_drain_test",
+            category="unit",
+            cmd=[INST_DIR / "open_drain_test.py"],
+        )
+    )
     return tests
 
 
