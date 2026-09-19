@@ -273,6 +273,40 @@ def DIAGNOSE_TOOLS():
 # Flag to skip pnr
 YOSYS_JSON_ONLY = False
 
+# Xilinx 7-series open-source flow (Yosys + nextpnr-xilinx + Project X-Ray).
+XC7_NEXTPNR_EXE = "nextpnr-xilinx"
+XC7_FASM2FRAMES_EXE = "fasm2frames"
+XC7_FRAMES2BIT_EXE = "xc7frames2bit"
+
+
+def IS_XC7_PART(part_str):
+    return bool(part_str) and part_str.lower().startswith("xc7")
+
+
+def _XC7_ARCH_CHIPDB_NAMES(part_str):
+    """Return plausible nextpnr-xilinx architecture chipdb names."""
+    package_part = part_str.lower().split("-", 1)[0]
+    names = [package_part + ".bin"]
+    for marker in ("xc7a35t", "xc7a50t", "xc7a100t", "xc7a200t"):
+        if package_part.startswith(marker):
+            names.append(marker + ".bin")
+            break
+    return names
+
+
+def GET_XC7_CHIPDB_PATH(part_str):
+    value = os.environ.get("OPENXC7_CHIPDB")
+    if not value:
+        return None
+    if os.path.isfile(value):
+        return value
+    if os.path.isdir(value):
+        for name in _XC7_ARCH_CHIPDB_NAMES(part_str):
+            candidate = os.path.join(value, name)
+            if os.path.isfile(candidate):
+                return candidate
+    return None
+
 
 # Derive cmd line options from part
 def PART_TO_CMD_LINE_OPTS(part_str):
@@ -381,9 +415,13 @@ class ParsedTimingReport:
         tok1 = "Max frequency for clock"
         for line in syn_output.split("\n"):
             if tok1 in line:
-                clk_str = line.split(tok1)[1]
-                clk_name = clk_str.split(":")[0].strip().strip("'")
-                freqs_str = clk_str.split(":")[1]
+                clk_str = line.split(tok1, 1)[1]
+                # Synthesized clock net names may themselves contain colons
+                # (for example Yosys auto names such as
+                # '$auto$clkbufmap.cc:294:execute$2176').  The final colon is
+                # the delimiter before nextpnr's frequency text.
+                clk_name, freqs_str = clk_str.rsplit(":", 1)
+                clk_name = clk_name.strip().strip("'")
                 # print("clk_str",clk_str)
                 # print("freqs_str",freqs_str)
                 actual_mhz = float(freqs_str.split("MHz")[0])
@@ -491,6 +529,7 @@ def SYN_AND_REPORT_TIMING(
         total_latency,
         hash_ext,
         use_existing_log_file,
+        is_final_top,
     )
 
 
@@ -508,7 +547,11 @@ def SYN_AND_REPORT_TIMING_NEW(
     total_latency=None,
     hash_ext=None,
     use_existing_log_file=True,
+    is_final_top=False,
 ):
+    is_xc7 = IS_XC7_PART(parser_state.part)
+    xc7_final_top = is_xc7 and is_final_top
+
     # Single inst
     if inst_name:
         Logic = parser_state.LogicInstLookupTable[inst_name]
@@ -538,7 +581,7 @@ def SYN_AND_REPORT_TIMING_NEW(
         # Set log path
         # Hash for multi main is just hash of main pipes
         hash_ext = multimain_timing_params.GET_HASH_EXT(parser_state)
-        log_file_name = "open_tools" + hash_ext + ".log"
+        log_file_name = "open_tools_final.log" if xc7_final_top else "open_tools" + hash_ext + ".log"
 
     if not os.path.exists(output_directory):
         os.makedirs(output_directory)
@@ -549,7 +592,7 @@ def SYN_AND_REPORT_TIMING_NEW(
     log_to_read = log_path
 
     # If log file exists dont run syn
-    if os.path.exists(log_to_read) and use_existing_log_file:
+    if not xc7_final_top and os.path.exists(log_to_read) and use_existing_log_file:
         # print "SKIPPED:", syn_imp_bash_cmd
         print("Reading log", log_to_read)
         f = open(log_path, "r")
@@ -573,7 +616,9 @@ def SYN_AND_REPORT_TIMING_NEW(
                 multimain_timing_params.TimingParamsLookupTable,
             )
         else:
-            VHDL.WRITE_MULTIMAIN_TOP(parser_state, multimain_timing_params)
+            VHDL.WRITE_MULTIMAIN_TOP(
+                parser_state, multimain_timing_params, xc7_final_top
+            )
 
         # Generate files for this SYN
 
@@ -588,14 +633,25 @@ def SYN_AND_REPORT_TIMING_NEW(
 
         # Which vhdl files?
         vhdl_files_texts, top_entity_name = SYN.GET_VHDL_FILES_TCL_TEXT_AND_TOP(
-            multimain_timing_params, parser_state, inst_name
+            multimain_timing_params, parser_state, inst_name, xc7_final_top
         )
 
         if GHDL_PREFIX is None:
             raise Exception("ghdl not installed?")
         if YOSYS_BIN_PATH is None:
             raise Exception("yosys not installed?")
-        if NEXTPNR_BIN_PATH is None:
+
+        if is_xc7:
+            nextpnr_exe = GET_TOOL_PATH(XC7_NEXTPNR_EXE)
+            chipdb_path = GET_XC7_CHIPDB_PATH(parser_state.part)
+            if nextpnr_exe is None:
+                raise Exception("nextpnr-xilinx not installed? Put it on PATH.")
+            if chipdb_path is None:
+                raise Exception(
+                    "No nextpnr-xilinx chipdb for " + parser_state.part + ". Set "
+                    "OPENXC7_CHIPDB to the chipdb file or containing directory."
+                )
+        elif NEXTPNR_BIN_PATH is None:
             raise Exception("nextpnr not installed?")
 
         # A single shell script build .sh
@@ -611,51 +667,160 @@ def SYN_AND_REPORT_TIMING_NEW(
         f = open(sh_path, "w")
         # -v --debug
         if not YOSYS_JSON_ONLY:
-            # Which exe?
-            if parser_state.part.lower().startswith("ice"):
-                exe_ext = "ice40"
-                nowidelut = ""
-                dsp = "-dsp"
+            if is_xc7:
+                # Characterization tops are synthetic register-to-register timing
+                # shells, not physical board interfaces. Avoid inferred I/O pads
+                # there: unconstrained synthetic ports can otherwise be assigned
+                # to unbonded/nonexistent package BELs by nextpnr-xilinx. Final
+                # tops still need normal I/O pads for board-constrained P&R.
+                xc7_iopad_arg = "" if is_final_top else " -noiopad"
+                yosys_script_arg = WRITE_YOSYS_SCRIPT(
+                    [
+                        f"ghdl --std=08 -frelaxed {vhdl_files_texts} -e {top_entity_name}",
+                        f"synth_xilinx -flatten -abc9 -arch xc7{xc7_iopad_arg} -top {top_entity_name}",
+                        f"write_json {top_entity_name}.json",
+                    ],
+                    output_directory + "/" + top_entity_name + "_yosys.ys",
+                )
+                f.write(
+                    """
+#!/usr/bin/env bash
+set -e
+export GHDL_PREFIX="""
+                    + GHDL_PREFIX
+                    + f"""
+# Elab+Syn (json is output)
+{YOSYS_BIN_PATH}/yosys {m_ghdl} {yosys_script_arg} &>> {shlex.quote(log_file_name)}
+"""
+                )
+
+                xdc_arg = ""
+                if is_final_top and SYN.PIN_CONSTRAINTS_FILE:
+                    xdc_arg = " --xdc " + shlex.quote(SYN.PIN_CONSTRAINTS_FILE)
+                elif not is_final_top:
+                    characterization_netlist_helper = os.path.join(
+                        os.path.dirname(os.path.abspath(__file__)),
+                        "openxc7_characterization_netlist.py",
+                    )
+                    f.write(
+                        shlex.quote(sys.executable)
+                        + " "
+                        + shlex.quote(characterization_netlist_helper)
+                        + " "
+                        + shlex.quote(top_entity_name + ".json")
+                        + " "
+                        + shlex.quote(top_entity_name)
+                        + "\n"
+                    )
+                fasm_arg = ""
+                if is_final_top:
+                    fasm_arg = " --fasm " + shlex.quote(top_entity_name + ".fasm")
+                f.write(
+                    shlex.quote(nextpnr_exe)
+                    + " --chipdb "
+                    + shlex.quote(chipdb_path)
+                    + xdc_arg
+                    + " --json "
+                    + shlex.quote(top_entity_name + ".json")
+                    + " --pre-pack "
+                    + shlex.quote(constraints_filepath)
+                    + " --timing-allow-fail --seed 1"
+                    + fasm_arg
+                    + " &>> "
+                    + shlex.quote(log_file_name)
+                    + "\n"
+                )
+
+                if is_final_top:
+                    fasm2frames = GET_TOOL_PATH(XC7_FASM2FRAMES_EXE)
+                    frames2bit = GET_TOOL_PATH(XC7_FRAMES2BIT_EXE)
+                    prjxray_db_dir = os.environ.get("PRJXRAY_DB_DIR")
+                    if fasm2frames is None or frames2bit is None:
+                        raise Exception(
+                            "Final xc7 bitstream generation needs fasm2frames and "
+                            "xc7frames2bit on PATH."
+                        )
+                    if prjxray_db_dir is None:
+                        raise Exception(
+                            "Final xc7 bitstream generation needs PRJXRAY_DB_DIR "
+                            "(Project X-Ray database root)."
+                        )
+                    part_name = parser_state.part.lower()
+                    part_yaml = os.path.join(
+                        prjxray_db_dir, "artix7", part_name, "part.yaml"
+                    )
+                    if not os.path.isfile(part_yaml):
+                        raise Exception("Project X-Ray part file not found: " + part_yaml)
+                    f.write(
+                        shlex.quote(fasm2frames)
+                        + " --part "
+                        + shlex.quote(part_name)
+                        + " --db-root "
+                        + shlex.quote(os.path.join(prjxray_db_dir, "artix7"))
+                        + " "
+                        + shlex.quote(top_entity_name + ".fasm")
+                        + " > "
+                        + shlex.quote(top_entity_name + ".frames")
+                        + "\n"
+                    )
+                    f.write(
+                        shlex.quote(frames2bit)
+                        + " --part_file "
+                        + shlex.quote(part_yaml)
+                        + " --part_name "
+                        + shlex.quote(part_name)
+                        + " --frm_file "
+                        + shlex.quote(top_entity_name + ".frames")
+                        + " --output_file "
+                        + shlex.quote(top_entity_name + ".bit")
+                        + "\n"
+                    )
             else:
-                exe_ext = "ecp5"
-                nowidelut = "-nowidelut"
-                dsp = ""
-            yosys_script_arg = WRITE_YOSYS_SCRIPT(
-                [
-                    f"ghdl --std=08 -frelaxed {vhdl_files_texts} -e {top_entity_name}",
-                    f"synth_{exe_ext} -abc9 {dsp} {nowidelut} -top {top_entity_name}"
-                    f" -json {top_entity_name}.json",
-                    f"write_edif -top {top_entity_name} {top_entity_name}.edf",
-                ],
-                output_directory + "/" + top_entity_name + "_yosys.ys",
-            )
-            f.write(
-                """
+                # Which exe?
+                if parser_state.part.lower().startswith("ice"):
+                    exe_ext = "ice40"
+                    nowidelut = ""
+                    dsp = "-dsp"
+                else:
+                    exe_ext = "ecp5"
+                    nowidelut = "-nowidelut"
+                    dsp = ""
+                yosys_script_arg = WRITE_YOSYS_SCRIPT(
+                    [
+                        f"ghdl --std=08 -frelaxed {vhdl_files_texts} -e {top_entity_name}",
+                        f"synth_{exe_ext} -abc9 {dsp} {nowidelut} -top {top_entity_name}"
+                        f" -json {top_entity_name}.json",
+                        f"write_edif -top {top_entity_name} {top_entity_name}.edf",
+                    ],
+                    output_directory + "/" + top_entity_name + "_yosys.ys",
+                )
+                f.write(
+                    """
 #!/usr/bin/env bash
 export GHDL_PREFIX="""
-                + GHDL_PREFIX
-                + f"""
+                    + GHDL_PREFIX
+                    + f"""
 # Elab+Syn (json is output) $MODULE -g
 {YOSYS_BIN_PATH}/yosys {m_ghdl} {yosys_script_arg} &>> """
-                + log_file_name
-                + f"""
+                    + log_file_name
+                    + f"""
 # P&R
 {NEXTPNR_BIN_PATH}/nextpnr-"""
-                + exe_ext
-                + " "
-                + PART_TO_CMD_LINE_OPTS(parser_state.part)
-                + " --json "
-                + top_entity_name
-                + ".json --pre-pack "
-                + constraints_filepath
-                + " --timing-allow-fail "
-                + " --seed 1 "
-                + optional_router2
-                + " &>> "
-                + log_file_name
-                + """
+                    + exe_ext
+                    + " "
+                    + PART_TO_CMD_LINE_OPTS(parser_state.part)
+                    + " --json "
+                    + top_entity_name
+                    + ".json --pre-pack "
+                    + constraints_filepath
+                    + " --timing-allow-fail "
+                    + " --seed 1 "
+                    + optional_router2
+                    + " &>> "
+                    + log_file_name
+                    + """
 """
-            )
+                )
         else:
             # YOSYS_JSON_ONLY
             yosys_script_arg = WRITE_YOSYS_SCRIPT(
