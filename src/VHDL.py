@@ -5165,6 +5165,12 @@ class PiplineHDLParams:
             self.wires_to_decl.append(wire_name)
             self.wire_to_reg_stage_start_end[wire_name] = [None, None]
 
+        # Preserve deterministic declaration order in wires_to_decl, but use a set
+        # for the many membership tests while building per-stage read/write maps.
+        # Large elaborated designs can contain hundreds of thousands of wires;
+        # list membership here otherwise makes this pass quadratic.
+        wires_to_decl_set = set(self.wires_to_decl)
+
         # Arrange into list of driven(write) wires per stage, and list of driver(read) wires
 
         # Init non-stages stuff,
@@ -5228,9 +5234,9 @@ class PiplineHDLParams:
                     driver_driven_wire_pair
                 ) in submodule_level_info.driver_driven_wire_pairs:
                     driver_wire, driven_wire = driver_driven_wire_pair
-                    if driven_wire in self.wires_to_decl:
+                    if driven_wire in wires_to_decl_set:
                         self.stage_to_driven_wires[stage].append(driven_wire)
-                    if driver_wire in self.wires_to_decl:
+                    if driver_wire in wires_to_decl_set:
                         self.stage_to_driver_wires[stage].append(driver_wire)
                 # Submodule instances
                 for sub_inst in submodule_level_info.submodule_insts:
@@ -5252,7 +5258,7 @@ class PiplineHDLParams:
                         in_wire = sub_inst + C_TO_LOGIC.SUBMODULE_MARKER + input_port
                         sub_in_wires.append(in_wire)
                     for in_wire in sub_in_wires:
-                        if in_wire in self.wires_to_decl:
+                        if in_wire in wires_to_decl_set:
                             self.stage_to_driver_wires[stage].append(in_wire)
                     # HACK AF for VHDL expr and func since input wires dont get named
                     # So need to manually see reading of driver of input ports
@@ -5260,7 +5266,7 @@ class PiplineHDLParams:
                     if sub_logic.is_vhdl_func or sub_logic.is_vhdl_expr:
                         for in_wire in sub_in_wires:
                             driver_of_in_wire = Logic.wire_driven_by[in_wire]
-                            if driver_of_in_wire in self.wires_to_decl:
+                            if driver_of_in_wire in wires_to_decl_set:
                                 self.stage_to_driver_wires[stage].append(
                                     driver_of_in_wire
                                 )
@@ -5271,7 +5277,7 @@ class PiplineHDLParams:
                     if sub_latency == 0:
                         for out_port in sub_logic.outputs:
                             out_wire = sub_inst + C_TO_LOGIC.SUBMODULE_MARKER + out_port
-                            if out_wire in self.wires_to_decl:
+                            if out_wire in wires_to_decl_set:
                                 self.stage_to_driven_wires[stage].append(out_wire)
 
         # Do passes over drivers and driven wires per stage to find range of use
@@ -5380,6 +5386,7 @@ class PiplineHDLParams:
                     wires_to_rm.append(wire)
         for wire_to_rm in wires_to_rm:
             self.wires_to_decl.remove(wire_to_rm)
+            wires_to_decl_set.remove(wire_to_rm)
             self.wire_to_reg_stage_start_end.pop(wire_to_rm)
 
         # for wire in self.wire_to_reg_stage_start_end:
@@ -5593,7 +5600,7 @@ def WRITE_LOGIC_ENTITY(
         rv += "\n"
         # Connect submodules
         if len(Logic.submodule_instances) > 0:
-            rv += "-- SUBMODULE INSTANCES \n"
+            submodule_instance_text = ["-- SUBMODULE INSTANCES \n"]
             for inst in Logic.submodule_instances:
                 instance_name = inst_name + C_TO_LOGIC.SUBMODULE_MARKER + inst
                 submodule_logic_name = Logic.submodule_instances[inst]
@@ -5614,9 +5621,8 @@ def WRITE_LOGIC_ENTITY(
                     instance_name, parser_state, TimingParamsLookupTable
                 )
                 new_inst_name = WIRE_TO_VHDL_NAME(inst, Logic)
-                rv += (
-                    "-- " + new_inst_name + f" : {submodule_latency} clocks latency"
-                    "\n"
+                submodule_instance_text.append(
+                    "-- " + new_inst_name + f" : {submodule_latency} clocks latency\n"
                 )
                 submodule_needs_clk = LOGIC_NEEDS_CLOCK(
                     instance_name,
@@ -5633,7 +5639,7 @@ def WRITE_LOGIC_ENTITY(
                 submodule_needs_module_to_global = LOGIC_NEEDS_MODULE_TO_GLOBAL(
                     submodule_logic, parser_state
                 )
-                rv += (
+                submodule_instance_text.append(
                     new_inst_name
                     + " : entity work."
                     + GET_ENTITY_NAME(
@@ -5644,32 +5650,37 @@ def WRITE_LOGIC_ENTITY(
                     )
                     + " port map (\n"
                 )
+                port_map_items = []
                 if submodule_needs_clk:
-                    rv += "clk,\n"
+                    port_map_items.append("clk")
                 if submodule_needs_clk_en:
                     ce_wire = (
                         inst
                         + C_TO_LOGIC.SUBMODULE_MARKER
                         + C_TO_LOGIC.CLOCK_ENABLE_NAME
                     )
-                    rv += WIRE_TO_VHDL_NAME(ce_wire, Logic) + ",\n"
+                    port_map_items.append(WIRE_TO_VHDL_NAME(ce_wire, Logic))
                 # Clock cross in
                 if submodule_needs_global_to_module:
-                    rv += "global_to_module." + WIRE_TO_VHDL_NAME(inst) + ",\n"
+                    port_map_items.append(
+                        "global_to_module." + WIRE_TO_VHDL_NAME(inst)
+                    )
                 # Clock cross out
                 if submodule_needs_module_to_global:
-                    rv += "module_to_global." + WIRE_TO_VHDL_NAME(inst) + ",\n"
+                    port_map_items.append(
+                        "module_to_global." + WIRE_TO_VHDL_NAME(inst)
+                    )
                 # Inputs
                 for in_port in submodule_logic.inputs:
                     in_wire = inst + C_TO_LOGIC.SUBMODULE_MARKER + in_port
-                    rv += WIRE_TO_VHDL_NAME(in_wire, Logic) + ",\n"
+                    port_map_items.append(WIRE_TO_VHDL_NAME(in_wire, Logic))
                 # Outputs
                 for out_port in submodule_logic.outputs:
                     out_wire = inst + C_TO_LOGIC.SUBMODULE_MARKER + out_port
-                    rv += WIRE_TO_VHDL_NAME(out_wire, Logic) + ",\n"
-                # Remove last two chars
-                rv = rv[0 : len(rv) - 2]
-                rv += ");\n\n"
+                    port_map_items.append(WIRE_TO_VHDL_NAME(out_wire, Logic))
+                submodule_instance_text.append(",\n".join(port_map_items))
+                submodule_instance_text.append(");\n\n")
+            rv += "".join(submodule_instance_text)
 
         # Get the text that is actually the pipeline logic in this entity
         rv += "\n"
