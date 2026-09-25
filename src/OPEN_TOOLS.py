@@ -403,6 +403,13 @@ def XC7_YOSYS_COMMANDS(vhdl_files_texts, top_entity_name, is_final_top):
         XC7_SYNTH_XILINX_COMMAND(top_entity_name, is_final_top),
     ]
     if not is_final_top:
+        # Characterization tops are not physical board interfaces. Open-drain
+        # globals synthesize to $_TBUF_ cells even under -noiopad; nextpnr-xilinx
+        # can only place those in real I/O sites, which characterization tops
+        # intentionally do not have. Collapse tri-state cells to ordinary logic
+        # before removing the synthetic top-level ports. Final implementation
+        # skips this pass so real open-drain pads retain their TBUF semantics.
+        commands.append("tribuf -logic")
         commands.append(f"delete -port {top_entity_name}")
     commands.append(f"write_json {top_entity_name}.json")
     return commands
