@@ -138,13 +138,15 @@ def test_openxc7_characterization_avoids_physical_iopads():
     # nextpnr-xilinx to turn into PADs
     assert "-noiopad" in characterization[1]
     assert characterization[1].endswith("-top timing_top")
-    assert characterization[-2:] == [
+    assert characterization[-3:] == [
         "delete -port timing_top",
+        "tribuf -logic",
         "write_json timing_top.json",
     ]
     # Final: normal board I/O for the --pins XDC
     assert "-noiopad" not in final[1]
     assert final[1].endswith("-top top")
+    assert "tribuf -logic" not in final
     assert not any(command.startswith("delete") for command in final)
     assert final[-1] == "write_json top.json"
 

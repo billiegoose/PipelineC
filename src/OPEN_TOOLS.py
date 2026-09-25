@@ -409,8 +409,8 @@ def XC7_YOSYS_COMMANDS(vhdl_files_texts, top_entity_name, is_final_top):
         # intentionally do not have. Collapse tri-state cells to ordinary logic
         # before removing the synthetic top-level ports. Final implementation
         # skips this pass so real open-drain pads retain their TBUF semantics.
-        commands.append("tribuf -logic")
         commands.append(f"delete -port {top_entity_name}")
+        commands.append("tribuf -logic")
     commands.append(f"write_json {top_entity_name}.json")
     return commands
 
