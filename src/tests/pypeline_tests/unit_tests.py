@@ -276,7 +276,7 @@ def get_tests() -> list:
             cmd=[INST_DIR / "vhdl_submodule_port_map_test.py"],
         )
     )
-    # Zero-latency scheduler complexity regression.
+    # Dependency-driven pipeline scheduler complexity and latency regressions.
     tests.append(
         Test(
             name="zero_latency_scheduler_scalability_test",
