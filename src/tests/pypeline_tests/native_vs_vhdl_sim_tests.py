@@ -51,6 +51,7 @@ COMB_TEST_FILES = [
     ("self_check_stream_auto_comb_area_opt_test.py", INST_DIR, []),
     ("pipeline_latency_sim_test.py", INST_DIR, []),
     ("self_check_counter_test.py", INST_DIR, []),
+    ("general_elif_priority_test.py", INST_DIR, []),
     ("self_check_fifo_test.py", INST_DIR, []),
     # make_ram/make_stream_ram: the hand-written simulation model against the
     # generated raw VHDL -- init from Python values across element types,

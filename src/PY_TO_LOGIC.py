@@ -3833,6 +3833,314 @@ class FuncElaborator:
             iteration += 1
         self.loop_instance_prefix = outer_prefix
 
+
+    @staticmethod
+    def _pure_elif_test(expr):
+        """Return True when evaluating expr cannot itself perform hardware actions.
+
+        General elif flattening relies on being able to elaborate every condition
+        from the same pre-chain value state while using clock-enable wires only to
+        preserve Python's left-to-right priority.  Calls and expression forms with
+        explicit evaluation side effects conservatively fall back to the original
+        nested-if lowering.
+        """
+        forbidden = (
+            ast.Call,
+            ast.NamedExpr,
+            ast.Lambda,
+            ast.Await,
+            ast.Yield,
+            ast.YieldFrom,
+            ast.ListComp,
+            ast.SetComp,
+            ast.DictComp,
+            ast.GeneratorExp,
+        )
+        return not any(isinstance(node, forbidden) for node in ast.walk(expr))
+
+    def _general_elif_chain(self, stmt):
+        """Return (arms, final_else) for a flattenable runtime elif chain."""
+        arms = []
+        cur = stmt
+        while True:
+            arms.append(cur)
+            if len(cur.orelse) == 1 and isinstance(cur.orelse[0], ast.If):
+                cur = cur.orelse[0]
+                continue
+            final_else = list(cur.orelse)
+            break
+        if len(arms) < 2:
+            return None
+        # Keep compile-time branch elimination exactly as before rather than trying
+        # to mix constant and runtime arms in the first implementation.
+        for arm in arms:
+            if self._try_eval_const(arm.test) is not None:
+                return None
+            if not self._pure_elif_test(arm.test):
+                return None
+        return arms, final_else
+
+    def _elab_if_test_bool(self, test, anchor):
+        """Elaborate an if-test and normalize it to a uint1_t wire."""
+        cond_wire, cond_type = self._elab_expr(test)
+        if cond_type == C_TO_LOGIC.BOOL_C_TYPE:
+            return cond_wire
+        zero_wire, zero_type = self._elab_python_value(0, anchor)
+        if _ctype_is_int(cond_type) and _ctype_is_int(zero_type):
+            eff_l, eff_r, _ = _arith_promote(cond_type, zero_type)
+        else:
+            eff_l, eff_r = cond_type, zero_type
+        neq_func = _bin_func_name(C_TO_LOGIC.BIN_OP_NEQ_NAME, eff_l, eff_r)
+        neq_inst = self._inst(
+            f"{C_TO_LOGIC.BIN_OP_LOGIC_NAME_PREFIX}_{C_TO_LOGIC.BIN_OP_NEQ_NAME}_if_cond",
+            anchor,
+        )
+        neq_out = _port_wire(neq_inst, C_TO_LOGIC.RETURN_WIRE_NAME)
+        _add_submodule_instance(
+            self.logic,
+            neq_inst,
+            neq_func,
+            [("left", cond_wire, eff_l), ("right", zero_wire, eff_r)],
+            neq_out,
+            C_TO_LOGIC.BOOL_C_TYPE,
+            anchor,
+            self.src_file,
+        )
+        return neq_out
+
+
+    def _elif_select_pair(self, cond_wire, residual_select_wire, anchor):
+        """Build raw priority selects independent of CLOCK_ENABLE.
+
+        taken = residual & cond; residual' = residual & !cond.  These wires select
+        ordinary combinational values and therefore MUST NOT be qualified by the
+        enclosing clock enable.
+        """
+        zero_wire, _ = self._elab_python_value(0, anchor)
+        mux_func = f"{C_TO_LOGIC.MUX_LOGIC_NAME}_{C_TO_LOGIC.BOOL_C_TYPE}"
+
+        true_inst = self._inst("ELIF_TRUE_SELECT_mux", anchor)
+        true_out = _port_wire(true_inst, C_TO_LOGIC.RETURN_WIRE_NAME)
+        true_wire = _alias(
+            f"{self.loop_instance_prefix}ELIF_TRUE_SELECT", self.src_file, anchor
+        )
+        _add_submodule_instance(
+            self.logic, true_inst, mux_func,
+            [("cond", cond_wire, C_TO_LOGIC.BOOL_C_TYPE),
+             ("iftrue", residual_select_wire, C_TO_LOGIC.BOOL_C_TYPE),
+             ("iffalse", zero_wire, C_TO_LOGIC.BOOL_C_TYPE)],
+            true_out, C_TO_LOGIC.BOOL_C_TYPE, anchor, self.src_file,
+        )
+        _add_wire(self.logic, true_wire, C_TO_LOGIC.BOOL_C_TYPE)
+        _connect(self.logic, true_out, true_wire)
+
+        false_inst = self._inst("ELIF_FALSE_SELECT_mux", anchor)
+        false_out = _port_wire(false_inst, C_TO_LOGIC.RETURN_WIRE_NAME)
+        false_wire = _alias(
+            f"{self.loop_instance_prefix}ELIF_FALSE_SELECT", self.src_file, anchor
+        )
+        _add_submodule_instance(
+            self.logic, false_inst, mux_func,
+            [("cond", cond_wire, C_TO_LOGIC.BOOL_C_TYPE),
+             ("iftrue", zero_wire, C_TO_LOGIC.BOOL_C_TYPE),
+             ("iffalse", residual_select_wire, C_TO_LOGIC.BOOL_C_TYPE)],
+            false_out, C_TO_LOGIC.BOOL_C_TYPE, anchor, self.src_file,
+        )
+        _add_wire(self.logic, false_wire, C_TO_LOGIC.BOOL_C_TYPE)
+        _connect(self.logic, false_out, false_wire)
+        return true_wire, false_wire
+
+    def _elif_gate_parent_ce(self, select_wire, parent_ce_wire, anchor, tag):
+        """Qualify a raw branch select with the enclosing execution enable."""
+        zero_wire, _ = self._elab_python_value(0, anchor)
+        mux_func = f"{C_TO_LOGIC.MUX_LOGIC_NAME}_{C_TO_LOGIC.BOOL_C_TYPE}"
+        inst = self._inst(f"ELIF_{tag}_{C_TO_LOGIC.CLOCK_ENABLE_NAME}_mux", anchor)
+        out = _port_wire(inst, C_TO_LOGIC.RETURN_WIRE_NAME)
+        wire = _alias(
+            f"{self.loop_instance_prefix}ELIF_{tag}_{C_TO_LOGIC.CLOCK_ENABLE_NAME}",
+            self.src_file, anchor,
+        )
+        _add_submodule_instance(
+            self.logic, inst, mux_func,
+            [("cond", select_wire, C_TO_LOGIC.BOOL_C_TYPE),
+             ("iftrue", parent_ce_wire, C_TO_LOGIC.BOOL_C_TYPE),
+             ("iffalse", zero_wire, C_TO_LOGIC.BOOL_C_TYPE)],
+            out, C_TO_LOGIC.BOOL_C_TYPE, anchor, self.src_file,
+        )
+        _add_wire(self.logic, wire, C_TO_LOGIC.BOOL_C_TYPE)
+        _connect(self.logic, out, wire)
+        return wire
+
+    def _elab_general_elif(self, stmt, arms, final_else):
+        """Flatten a pure runtime elif chain with separate value and CE priority."""
+        env_snap = dict(self.env)
+        aliases_snap = {
+            k: list(v) for k, v in self.logic.wire_aliases_over_time.items()
+        }
+        parent_ce_wire = self.logic.clock_enable_wires[-1]
+        residual_select_wire, residual_select_type = self._elab_python_value(1, stmt)
+        if residual_select_type != C_TO_LOGIC.BOOL_C_TYPE:
+            raise ElaborationError("internal error: elif priority seed is not uint1_t")
+        branches = []
+
+        def restore_pre():
+            self.env = dict(env_snap)
+            self.logic.wire_aliases_over_time = {
+                k: list(v) for k, v in aliases_snap.items()
+            }
+
+        def new_driven(aliases_after):
+            out = {}
+            for base_var, after_list in aliases_after.items():
+                if base_var not in env_snap:
+                    continue
+                before_list = aliases_snap.get(base_var, [])
+                for alias in after_list[len(before_list):]:
+                    ref_toks = self.logic.alias_to_driven_ref_toks.get(alias)
+                    mux_type = self.logic.wire_to_c_type.get(alias)
+                    if ref_toks is None or mux_type is None:
+                        continue
+                    out[_ref_toks_to_alias_prefix(ref_toks)] = (ref_toks, mux_type)
+            return out
+
+        # Pure conditions are evaluated from the pre-chain value state.  Maintain a
+        # RAW priority-select chain for ordinary values, separately from execution
+        # clock enable.  Qualifying value selects with parent CE is incorrect: a
+        # disabled enclosing block may suppress effects, but cannot change the
+        # combinational value represented by the branch expression.
+        for index, arm in enumerate(arms):
+            restore_pre()
+            cond_wire = self._elab_if_test_bool(arm.test, arm.test)
+            taken_select_wire, residual_select_wire = self._elif_select_pair(
+                cond_wire, residual_select_wire, arm.test
+            )
+            taken_ce_wire = self._elif_gate_parent_ce(
+                taken_select_wire, parent_ce_wire, arm.test, f"ARM{index}"
+            )
+
+            restore_pre()
+            self.logic.clock_enable_wires.append(taken_ce_wire)
+            for body_stmt in arm.body:
+                self._elab_stmt(body_stmt)
+            self.logic.clock_enable_wires.pop()
+            env_branch = dict(self.env)
+            aliases_branch = {
+                k: list(v) for k, v in self.logic.wire_aliases_over_time.items()
+            }
+            branches.append(
+                (
+                    taken_select_wire,
+                    env_branch,
+                    aliases_branch,
+                    arm,
+                    f"elif{index}",
+                    new_driven(aliases_branch),
+                )
+            )
+
+        if final_else:
+            restore_pre()
+            else_ce_wire = self._elif_gate_parent_ce(
+                residual_select_wire, parent_ce_wire, final_else[0], "ELSE"
+            )
+            self.logic.clock_enable_wires.append(else_ce_wire)
+            for body_stmt in final_else:
+                self._elab_stmt(body_stmt)
+            self.logic.clock_enable_wires.pop()
+            env_branch = dict(self.env)
+            aliases_branch = {
+                k: list(v) for k, v in self.logic.wire_aliases_over_time.items()
+            }
+            anchor = final_else[0]
+            branches.append(
+                (
+                    residual_select_wire,
+                    env_branch,
+                    aliases_branch,
+                    anchor,
+                    "else",
+                    new_driven(aliases_branch),
+                )
+            )
+
+        restore_pre()
+
+        # Union every ref path written by any arm, then use the same struct/array
+        # coverage reduction as binary if lowering.
+        driven = {}
+        for _, _, _, _, _, branch_driven in branches:
+            for key, value in branch_driven.items():
+                if key not in driven:
+                    driven[key] = value
+        driven = _reduce_driven_ref_toks(driven, env_snap, self.parser_state)
+
+        def overlaps(a, b):
+            return _var_ref_toks_covers(a, b) or _var_ref_toks_covers(b, a)
+
+        # Merge each destination only across branches that can actually change it.
+        # Branch-select wires are mutually exclusive by construction, so these muxes
+        # are linear in real writes rather than triangular in syntactic nesting.
+        for key, (ref_toks, mux_type) in driven.items():
+            current_wire = self._read_branch_coverage(
+                ref_toks,
+                mux_type,
+                env_snap,
+                aliases_snap,
+                stmt,
+                "elif_pre",
+            )
+            base_var = ref_toks[0]
+            wrote_any = False
+            for active_wire, env_branch, aliases_branch, anchor, branch_tag, branch_driven in branches:
+                if not any(overlaps(ref_toks, rt) for rt, _ in branch_driven.values()):
+                    continue
+                branch_wire = self._read_branch_coverage(
+                    ref_toks,
+                    mux_type,
+                    env_branch,
+                    aliases_branch,
+                    anchor,
+                    branch_tag,
+                )
+                mux_suffix = mux_type.replace("[", "_").replace("]", "")
+                mux_func = f"{C_TO_LOGIC.MUX_LOGIC_NAME}_{mux_suffix}"
+                mux_tag = f"{mux_func}_elif_{branch_tag}_{key}"
+                mux_inst = self._inst(mux_tag, anchor)
+                mux_output = _port_wire(mux_inst, C_TO_LOGIC.RETURN_WIRE_NAME)
+                _add_submodule_instance(
+                    self.logic,
+                    mux_inst,
+                    mux_func,
+                    [
+                        ("cond", active_wire, C_TO_LOGIC.BOOL_C_TYPE),
+                        ("iftrue", branch_wire, mux_type),
+                        ("iffalse", current_wire, mux_type),
+                    ],
+                    mux_output,
+                    mux_type,
+                    anchor,
+                    self.src_file,
+                )
+                current_wire = mux_output
+                wrote_any = True
+
+            if not wrote_any:
+                continue
+            mux_alias = _alias(
+                f"{self.loop_instance_prefix}{key}_elif_mux", self.src_file, stmt
+            )
+            _add_wire(self.logic, mux_alias, mux_type)
+            _connect(self.logic, current_wire, mux_alias)
+            self.logic.wire_aliases_over_time.setdefault(base_var, []).append(mux_alias)
+            self.logic.alias_to_orig_var_name[mux_alias] = base_var
+            self.logic.alias_to_driven_ref_toks[mux_alias] = ref_toks
+            if not _has_variable_index(ref_toks):
+                env_key = _ref_toks_to_env_key(ref_toks)
+                self.env[env_key] = (mux_alias, mux_type)
+                self._invalidate_descendant_env(env_key)
+            else:
+                self._invalidate_env_for_var_write(ref_toks)
+
     def _elab_if(self, stmt):
         """if condition: ... else: ...
 
@@ -3851,6 +4159,12 @@ class FuncElaborator:
             coverage read enumerates all concrete positions and assembles them into
             mux_type via CONST_REF_RD assembly (_assemble_var_ref_coverage).
         """
+        general_chain = self._general_elif_chain(stmt)
+        if general_chain is not None:
+            arms, final_else = general_chain
+            self._elab_general_elif(stmt, arms, final_else)
+            return
+
         # ── Compile-time constant: branch elimination ──
         cond_val = self._try_eval_const(stmt.test)
         if cond_val is not None:
