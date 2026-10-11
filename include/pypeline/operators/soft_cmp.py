@@ -344,7 +344,7 @@ def _make_prefix_tree(n_leaves, level=0):
 
     @hw_func
     def soft_cmp_prefix(terms: in_t) -> leaf_t:
-        level_nodes: leaf_t[n_next]
+        level_nodes: leaf_t[n_next] = [leaf_t(0)] * n_next
         for i in range(n_pairs):
             l: leaf_t = terms[2 * i]
             r: leaf_t = terms[2 * i + 1]
@@ -410,13 +410,14 @@ def make_soft_cmp_prefix(op):
         make_t = make_int_t if is_signed else make_uint_t
         common_t = make_t(n_bits)
         u2_t = _uint2_t()
+        leaves_t = u2_t[n_bits]
         tree = _make_prefix_tree(n_bits)
 
         @hw_func
         def soft_cmp_prefix(a: l_t, b: r_t) -> uint1_t:
-            ae: common_t = a
-            be: common_t = b
-            leaves: u2_t[n_bits]
+            ae: common_t = common_t(a)
+            be: common_t = common_t(b)
+            leaves: u2_t[n_bits] = [u2_t(0)] * n_bits
             # MSB-first leaf order (index 0 = most significant bit) so the
             # tree's leader-select combine reproduces the serial scan's
             # "first decided bit, scanning from the top" answer.
